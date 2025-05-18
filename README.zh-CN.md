@@ -87,4 +87,4 @@ npm install
 
 ---
 
-**注意**：此README将持续更新。    
+**注意**：此README将持续更新。
