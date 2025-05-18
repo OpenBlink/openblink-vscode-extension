@@ -69,6 +69,7 @@ BSD-3-Clause
 ## 支持
 
 - [GitHub Issues](https://github.com/OpenBlink/vscode-extension/issues)
+- [DeepWiki](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
 
 ## 参与开发
 ### 开发环境设置
@@ -85,4 +86,4 @@ npm install
 
 ---
 
-**注意**：此README将持续更新。 
+**注意**：此README将持续更新。  

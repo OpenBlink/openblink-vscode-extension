@@ -69,6 +69,7 @@ Coming soon...
 ## Support
 
 - [GitHub Issues](https://github.com/OpenBlink/vscode-extension/issues)
+- [DeepWiki](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
 
 ## Contributing
 ### Development Environment Setup
