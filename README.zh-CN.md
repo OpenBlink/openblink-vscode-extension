@@ -3,6 +3,7 @@
 [![English](https://img.shields.io/badge/language-English-blue.svg)](README.md)
 [![中文](https://img.shields.io/badge/language-中文-red.svg)](README.zh-CN.md)
 [![日本語](https://img.shields.io/badge/language-日本語-green.svg)](README.ja.md)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
 
 关于Open Blink的更多信息，请访问[这里](https://github.com/OpenBlink/openblink)。
 
@@ -86,4 +87,4 @@ npm install
 
 ---
 
-**注意**：此README将持续更新。  
+**注意**：此README将持续更新。    
