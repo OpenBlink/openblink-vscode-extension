@@ -6,45 +6,69 @@ name: OpenBlink Extension CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["main"]
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x]
+        os: [windows-latest, macos-latest]
+        node-version: [20.x]
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-    - run: npm ci
-    - run: npm install -g vsce
-    - run: npm run vscode:prepublish
-    - run: vsce package
+      - uses: actions/checkout@v4
 
-    - name: Publish to Open VSX Registry
-      uses: HaaLeo/publish-vscode-extension@v2
-      with:
-        pat: ${{ secrets.OPEN_VSX_PAT }}
+# (Commented-out block related to Visual Studio Build Tools installation removed for clarity)
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
 
-    - name: Publish to Visual Studio Marketplace
-      uses: HaaLeo/publish-vscode-extension@v2
-      with:
-        pat: ${{ secrets.AZURE_PAT }}
-        registryUrl: https://marketplace.visualstudio.com
+      # - if: matrix.os == 'windows-latest'
+      #   run: npm install --global --production windows-build-tools
 
-    # おわり
-    - name: End of workflow
-      run: echo "End of workflow" 
+      - name: Identify OS
+        if: matrix.os == 'macos-latest'
+        run: node package_mod.js
 
-  
+      - run: npm install
+      - run: npm install -g vsce
+      - run: npm run vscode:prepublish
+      # - run: vsce package
+
+      - name: Publish to Open VSX Registry(win)
+        if: matrix.os == 'windows-latest'
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.OPEN_VSX_PAT }}
+
+      - name: Publish to Visual Studio Marketplace(win)
+        if: matrix.os == 'windows-latest'
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.AZURE_PAT }}
+          registryUrl: https://marketplace.visualstudio.com
+
+      - name: Publish to Open VSX Registry(mac)
+        if: matrix.os == 'macos-latest'
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.OPEN_VSX_PAT }}
+          registryUrl: https://open-vsx.org
+
+      - name: Publish to Visual Studio Marketplace(mac)
+        if: matrix.os == 'macos-latest'
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.AZURE_PAT }}
+          registryUrl: https://marketplace.visualstudio.com
+
+      - name: End of workflow
+        run: echo "End of workflow"

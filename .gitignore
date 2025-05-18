@@ -7,3 +7,5 @@ node_modules
 # .vscode/
 out/
 node_modules/
+/extract
+*.zip

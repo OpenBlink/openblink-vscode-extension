@@ -1,4 +1,6 @@
-# Open Blink VSCode 拡張機能
+# Open Blink VSCode 拡張機能 for Windows
+
+**このリポジトリはWindowsユーザー向けです。Mac版は[こちら](https://marketplace.visualstudio.com/items?itemName=OpenBlink.open-blink-vscode-extension)をご覧ください。**
 
 [![English](https://img.shields.io/badge/language-English-blue.svg)](README.md)
 [![中文](https://img.shields.io/badge/language-中文-red.svg)](README.zh-CN.md)
@@ -27,6 +29,7 @@ BSD-3-Clause
 |-------|---------|--------|--------|
 | Windows 11 | ThinkPad E14 Gen4 | M5Stack AtomS3 | 2b4100591c5cbf9a20b6042136f3b1259e26a5d7 |
 | macOS 15.0 (24A8332) | MacMini M4 | M5Stack AtomS3 | 2b4100591c5cbf9a20b6042136f3b1259e26a5d7 |
+- Linux等の環境をお使いの場合は、[ソース](https://github.com/OpenBlink/openblink-vscode-extension)からビルドしてください。
 
 ## 対象ユーザー
 
@@ -79,6 +82,7 @@ BSD-3-Clause
 git clone https://github.com/OpenBlink/vscode-extension.git
 cd vscode-extension
 npm install
+npm -g install yo vsce
 ```
 
 ## 今後の予定
