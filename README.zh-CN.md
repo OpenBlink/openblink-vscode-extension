@@ -6,6 +6,7 @@
 [![中文](https://img.shields.io/badge/language-中文-red.svg)](README.zh-CN.md)
 [![日本語](https://img.shields.io/badge/language-日本語-green.svg)](README.ja.md)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
+[![.github/workflows/cicd.yml](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/cicd.yml/badge.svg)](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/cicd.yml)
 
 关于Open Blink的更多信息，请访问[这里](https://github.com/OpenBlink/openblink)。
 
