@@ -9,3 +9,13 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+
+# node_modules/
+# !node_modules/@abandonware/
+
+.github/
+.gitignore
+.package_mod.js
+extract/
+# resources/
+

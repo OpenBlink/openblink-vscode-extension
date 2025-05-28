@@ -1,15 +1,15 @@
 {
-  "name": "open-blink-vscode-extension",
-  "displayName": "Open Blink VSCode Extension",
-  "description": "A VSCode extension for Open Blink",
-  "version": "0.1.0",
+  "name": "open-blink-vscode-extension-for-windows",
+  "displayName": "Open Blink VSCode Extension for Windows",
+  "description": "A VSCode extension for Open Blink, Mac version is also available",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.96.0"
   },
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OpenBlink/vscode-extension"
+    "url": "https://github.com/OpenBlink/openblink-vscode-extension"
   },
   "publisher": "OpenBlink",
   "categories": [
@@ -36,6 +36,32 @@
       {
         "command": "open-blink-vscode-extension.disconnectDevice",
         "title": "Open Blink: Disconnect Device"
+      },
+      {
+        "command": "open-blink-vscode-extension.selectSourceFile",
+        "title": "Open Blink: Select Source File"
+      },
+      {
+        "command": "open-blink-vscode-extension.saveAndBlink",
+        "title": "Open Blink: Save and Blink"
+      }
+    ],
+    "configuration": {
+      "title": "Open Blink",
+      "properties": {
+        "open-blink-vscode-extension.keybindings.compileAndBlink": {
+          "type": "string",
+          "default": "ctrl+s",
+          "description": "Set the keybinding for the compile and blink command (e.g. ctrl+s). Leave blank to disable. This is a feature under testing and may not work as expected."
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "open-blink-vscode-extension.saveAndBlink",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "editorTextFocus && resourceExtname == .rb"
       }
     ],
     "viewsContainers": {
@@ -43,7 +69,7 @@
         {
           "id": "open-blink-explorer",
           "title": "Open Blink",
-          "icon": "resources/blink.svg"
+          "icon": "out/blink.svg"
         }
       ]
     },
@@ -57,38 +83,51 @@
       ]
     },
     "menus": {
-      "view/title": []
+      "view/title": [],
+      "explorer/context": [
+        {
+          "when": "resourceExtname == .rb",
+          "command": "open-blink-vscode-extension.selectSourceFile",
+          "group": "open-blink"
+        }
+      ]
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./ && npm run copy-resources",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run copy-resources && npm run compile",
+    "compile": "webpack --mode production",
+    "watch": "webpack --watch",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "copy-resources": "copyfiles -u 1 resources/mrbc.wasm resources/mrbc.js out/",
+    "copy-resources": "copyfiles -u 1 resources/blink.svg resources/mrbc.wasm resources/mrbc.js out/",
     "build": "npm run compile",
-    "ci": "npm run vscode:prepublish && vsce package"
+    "ci": "npm run vscode:prepublish && vsce package",
+    "analyze": "cross-env ANALYZE=true webpack --mode production"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/noble": "^0.0.44",
-    "@types/node": "20.x",
+    "@types/node": "22.x",
     "@types/vscode": "^1.96.0",
-    "@typescript-eslint/eslint-plugin": "^8.25.0",
-    "@typescript-eslint/parser": "^8.25.0",
+    "@typescript-eslint/eslint-plugin": "^8.28.0",
+    "@typescript-eslint/parser": "^8.28.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "copyfiles": "^2.4.1",
     "cross-env": "^7.0.3",
-    "eslint": "^9.21.0",
-    "typescript": "^5.7.3"
+    "eslint": "^9.23.0",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.8.2",
+    "webpack": "^5.98.0",
+    "webpack-bundle-analyzer": "^4.10.2",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "@abandonware/noble": "^1.9.2-26",
-    "noble-winrt": "^0.1.0",
-    "vsce": "^2.15.0",
-    "yo": "^5.1.0"
+    "@abandonware/noble": "^1.9.2-26"
+  },
+  "overrides": {
+    "semver-regex": "^3.1.3",
+    "trim-newlines": "^3.0.1"
   }
 }
