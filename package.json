@@ -97,7 +97,10 @@
         "openblink.slot": {
           "type": "number",
           "default": 2,
-          "enum": [1, 2],
+          "enum": [
+            1,
+            2
+          ],
           "description": "%config.slot%"
         },
         "openblink.sourceFile": {
@@ -207,7 +210,7 @@
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.2.2",
     "copy-webpack-plugin": "^14.0.0",
-    "eslint": "^9.23.0",
+    "eslint": "^10.2.0",
     "ts-loader": "^9.5.2",
     "typescript": "^6.0.2",
     "webpack": "^5.98.0",
