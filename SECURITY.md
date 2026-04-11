@@ -8,12 +8,19 @@ If you discover a security vulnerability, please report it responsibly by emaili
 
 This project regularly runs `npm audit` to detect known vulnerabilities in its dependency tree. The following are known transitive issues as of the latest audit:
 
-### `serialize-javascript` (transitive, via `copy-webpack-plugin` and `mocha`)
+### `serialize-javascript` (transitive, via `mocha`)
 
 - **Severity:** High
 - **Details:** Vulnerable to RCE via `RegExp.flags` / `Date.prototype.toISOString()` and CPU exhaustion via crafted array-like objects.
-- **Impact on this project:** Low. `serialize-javascript` is only used at **build time** (webpack plugin) and in the **test runner** (mocha). It is never shipped in the extension bundle or executed at runtime.
-- **Mitigation:** Monitor upstream for a patched release. No user-facing risk.
+- **Impact on this project:** Low. `serialize-javascript` is only pulled in by the **test runner** (mocha, via `@vscode/test-cli`). It is never shipped in the extension bundle or executed at runtime. The previous exposure via `copy-webpack-plugin` was resolved by upgrading to v14.0.0.
+- **Mitigation:** Monitor upstream mocha for a patched release. No user-facing risk.
+
+### `diff` (transitive, via `mocha`)
+
+- **Severity:** Low
+- **Details:** Denial of Service vulnerability in `parsePatch` and `applyPatch`.
+- **Impact on this project:** Low. Only used by the test runner (mocha). Not shipped in the extension bundle.
+- **Mitigation:** Monitor upstream mocha for a patched release. No user-facing risk.
 
 ### `tar` (transitive, via `@abandonware/noble` -> `@mapbox/node-pre-gyp`)
 
