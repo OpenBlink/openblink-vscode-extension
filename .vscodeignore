@@ -1,21 +1,23 @@
 .vscode/**
 .vscode-test/**
 src/**
-.gitignore
-.yarnrc
-vsc-extension-quickstart.md
-**/tsconfig.json
-**/.eslintrc.json
-**/*.map
-**/*.ts
-**/.vscode-test.*
-
-# node_modules/
-# !node_modules/@abandonware/
-
-.github/
-.gitignore
-.package_mod.js
-extract/
-# resources/
-
+vendor/**
+resources/wasm_build/**
+resources/wasm/**
+resources/boards/**
+node_modules/**
+!node_modules/@abandonware/**
+.gitmodules
+.github/**
+doc/**
+*.map
+*.ts
+!out/**
+tsconfig.json
+webpack.config.js
+eslint.config.*
+Makefile
+mruby_build_config.rb
+mruby_build_config.rb.lock
+package-lock.json
+.DS_Store
