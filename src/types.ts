@@ -57,7 +57,7 @@ export type NobleService = Service & {
 export type NobleCharacteristic = Characteristic & {
   subscribeAsync: () => Promise<void>;
   unsubscribeAsync: () => Promise<void>;
-  readAsync: () => Promise<DataView>;
+  readAsync: () => Promise<Buffer>;
   writeAsync: (data: Buffer | ArrayBuffer, withoutResponse?: boolean) => Promise<void>;
   discoverDescriptorsAsync: () => Promise<Descriptor[]>;
   on: (event: string, callback: (data: Buffer, isNotification?: boolean) => void) => void;

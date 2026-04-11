@@ -103,16 +103,18 @@ export function createStatusBar(): vscode.StatusBarItem {
 /**
  * @brief Update the status bar text and tooltip based on the current state.
  *
- * @param state       Current BLE connection state.
- * @param deviceName  Advertised device name (shown when connected).
- * @param metrics     Optional latest metrics to display inline.
- * @param slot        Optional active program slot number.
+ * @param state          Current BLE connection state.
+ * @param deviceName     Advertised device name (shown when connected).
+ * @param metrics        Optional latest metrics to display inline.
+ * @param slot           Optional active program slot number.
+ * @param reconnectInfo  Optional reconnect attempt/max counts for the reconnecting tooltip.
  */
 export function updateStatusBar(
   state: ConnectionState,
   deviceName?: string,
   metrics?: MetricsData,
-  slot?: number
+  slot?: number,
+  reconnectInfo?: { attempt: number; max: number }
 ): void {
   if (!statusBarItem) { return; }
 
@@ -127,7 +129,9 @@ export function updateStatusBar(
       break;
     case 'reconnecting':
       statusBarItem.text = '$(sync~spin) OpenBlink';
-      statusBarItem.tooltip = l10n.t('Reconnecting ({0}/{1})...', '...', '5');
+      statusBarItem.tooltip = reconnectInfo
+        ? l10n.t('Reconnecting ({0}/{1})...', String(reconnectInfo.attempt), String(reconnectInfo.max))
+        : l10n.t('Reconnecting...');
       break;
     case 'connected':
       if (metrics?.compileTime !== undefined) {

@@ -58,6 +58,8 @@ export class BleManager {
   private consoleDataHandler: ((data: Buffer) => void) | null = null;
   /** @brief Guard flag to prevent concurrent connectById() calls. */
   private _isConnecting = false;
+  /** @brief Whether the manager has been disposed. */
+  private _disposed = false;
   /** @brief Handle for the pending reconnect timer, if any. */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** @brief Whether a BLE scan is currently active. */
@@ -97,6 +99,10 @@ export class BleManager {
   get isConnected(): boolean { return this._connectionState === 'connected' && this.currentDevice !== null; }
   /** @brief Whether a BLE scan is currently active. */
   get isScanning(): boolean { return this._isScanning; }
+  /** @brief Current reconnect attempt count and maximum for UI display. */
+  get reconnectInfo(): { attempt: number; max: number } {
+    return { attempt: this.reconnectAttempts, max: BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS };
+  }
   /** @brief Devices discovered during the current or most recent scan. */
   get discoveredDevices(): ReadonlyMap<string, DeviceInfo> { return this._discoveredDevices; }
   /** @brief Advertised local name of the connected device. */
@@ -115,6 +121,7 @@ export class BleManager {
    * @param state  New connection state.
    */
   private setConnectionState(state: ConnectionState): void {
+    if (this._disposed) { return; }
     this._connectionState = state;
     this._onConnectionStateChanged.fire(state);
   }
@@ -124,6 +131,7 @@ export class BleManager {
    * @param message  Log message text.
    */
   private log(message: string): void {
+    if (this._disposed) { return; }
     this._onLog.fire(message);
   }
 
@@ -409,13 +417,9 @@ export class BleManager {
       if (device.gatt?.requestMTU) {
         this._negotiatedMTU = await device.gatt.requestMTU(BLE_CONSTANTS.REQUESTED_MTU);
       } else if (this.negotiatedMtuCharacteristic) {
-        const valueDataView = await this.negotiatedMtuCharacteristic.readAsync();
-        if (valueDataView instanceof DataView) {
-          const deviceMtu = valueDataView.getUint16(0, true);
-          this._negotiatedMTU = deviceMtu - 3;
-        } else {
-          const buffer = valueDataView as unknown as Buffer;
-          const deviceMtu = (buffer[1] << 8) | buffer[0];
+        const buffer = await this.negotiatedMtuCharacteristic.readAsync();
+        if (buffer.length >= 2) {
+          const deviceMtu = buffer.readUInt16LE(0);
           this._negotiatedMTU = deviceMtu - 3;
         }
       }
@@ -563,6 +567,7 @@ export class BleManager {
    * emitter.  Called automatically when the extension deactivates.
    */
   async dispose(): Promise<void> {
+    this._disposed = true;
     this.userInitiatedDisconnect = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
