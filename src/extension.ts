@@ -233,7 +233,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Wait for the device to appear or the scan to end, with an explicit timeout
           // to prevent the interval from leaking if scanning never completes.
           await new Promise<void>((resolve) => {
-            const timeoutMs = BLE_CONSTANTS.SCAN_TIMEOUT + 2000;
+            const timeoutMs = BLE_CONSTANTS.SCAN_TIMEOUT + BLE_CONSTANTS.SCAN_GRACE_PERIOD;
             const deadline = setTimeout(() => {
               clearInterval(checkInterval);
               resolve();
@@ -244,7 +244,7 @@ export function activate(context: vscode.ExtensionContext) {
                 clearTimeout(deadline);
                 resolve();
               }
-            }, 200);
+            }, BLE_CONSTANTS.DISCOVERY_POLL_INTERVAL);
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);

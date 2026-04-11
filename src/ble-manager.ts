@@ -141,12 +141,13 @@ export class BleManager {
     this.log(`[BLE] Waiting for Bluetooth adapter initialization...`);
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        noble.removeListener('stateChange', stateHandler);
         this.log(`[BLE] Bluetooth init timeout. Current state: ${nobleInstance.state}`);
         this.log(`[BLE] Troubleshooting: Check Bluetooth is enabled in System Settings.`);
         this.log(`[BLE] On macOS: System Settings > Privacy & Security > Bluetooth`);
         this.log(`[BLE] On Linux: Ensure BlueZ is running (sudo systemctl status bluetooth)`);
         reject(new Error(l10n.t('Bluetooth initialization timeout') + ` (state: ${nobleInstance.state})`));
-      }, 15000);
+      }, BLE_CONSTANTS.BLUETOOTH_INIT_TIMEOUT);
 
       const stateHandler = (state: string) => {
         this.log(`[BLE] Bluetooth state changed: ${state}`);
