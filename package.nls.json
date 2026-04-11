@@ -1,0 +1,23 @@
+{
+  "displayName": "OpenBlink VSCode Extension",
+  "description": "BLE-based microcontroller development with mruby — Build & Blink from your IDE",
+  "command.connectDevice": "Connect Device",
+  "command.disconnectDevice": "Disconnect Device",
+  "command.buildAndBlink": "Build & Blink",
+  "command.saveAndBuildAndBlink": "Save & Build & Blink",
+  "command.softReset": "Soft Reset",
+  "command.selectSourceFile": "Select Source File",
+  "command.selectBoard": "Select Board",
+  "command.selectSlot": "Select Slot",
+  "config.slot": "Program slot number (1 or 2)",
+  "config.sourceFile": "Ruby source file to compile (relative to workspace root)",
+  "config.board": "Target board name",
+  "command.scanDevices": "Scan Devices",
+  "command.stopScan": "Stop Scan",
+  "command.forgetDevice": "Forget Device",
+  "view.devices": "Devices",
+  "view.tasks": "Tasks",
+  "view.deviceInfo": "Device Info",
+  "view.metrics": "Metrics",
+  "view.boardReference": "Board Reference"
+}

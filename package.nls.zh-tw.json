@@ -1,0 +1,23 @@
+{
+  "displayName": "OpenBlink VSCode Extension",
+  "description": "透過BLE進行微控制器開發 (mruby) — 從IDE直接 Build & Blink",
+  "command.connectDevice": "連接裝置",
+  "command.disconnectDevice": "中斷連接",
+  "command.buildAndBlink": "Build & Blink",
+  "command.saveAndBuildAndBlink": "儲存並 Build & Blink",
+  "command.softReset": "軟體重設",
+  "command.selectSourceFile": "選擇原始檔",
+  "command.selectBoard": "選擇開發板",
+  "command.selectSlot": "選擇程式槽",
+  "config.slot": "程式槽編號 (1 或 2)",
+  "config.sourceFile": "要編譯的 Ruby 原始檔 (相對於工作區根目錄)",
+  "config.board": "目標開發板名稱",
+  "command.scanDevices": "掃描裝置",
+  "command.stopScan": "停止掃描",
+  "command.forgetDevice": "刪除裝置",
+  "view.devices": "裝置",
+  "view.tasks": "工作",
+  "view.deviceInfo": "裝置資訊",
+  "view.metrics": "指標",
+  "view.boardReference": "開發板參考"
+}

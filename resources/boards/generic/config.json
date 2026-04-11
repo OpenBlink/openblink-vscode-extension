@@ -1,0 +1,6 @@
+{
+  "name": "generic",
+  "displayName": "Generic",
+  "manufacturer": "Generic",
+  "description": "Generic board with mruby/c release3.4.1 standard library functions"
+}
