@@ -1,6 +1,7 @@
 # OpenBlink VSCode Extension
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
+[![CI](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/ci.yml)
 
 **Edit Ruby, save, and your device changes instantly** — wireless embedded development in < 0.1 seconds, with no restart required.
 
