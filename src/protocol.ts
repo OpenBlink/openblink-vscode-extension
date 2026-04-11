@@ -54,7 +54,7 @@ async function writeCharacteristic(
       reject(new Error(`BLE write timeout after ${timeout}ms`));
     }, timeout);
 
-    const writePromise = characteristic.properties.includes('writeWithoutResponse')
+    const writePromise = characteristic.properties?.includes('writeWithoutResponse')
       ? characteristic.writeAsync(nodeBuffer, true)
       : characteristic.writeAsync(nodeBuffer);
 

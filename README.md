@@ -64,6 +64,7 @@ The currently active `.rb` file in the editor is always the one that gets compil
 - [Board Configuration](doc/board-configuration.md) — How to add new board definitions
 - [Internationalization](doc/i18n.md) — Multi-language support guide
 - [Contributing](doc/contributing.md) — Development environment setup
+- [Security](SECURITY.md) — Security policy and dependency audit
 
 ## License
 

@@ -99,6 +99,14 @@ See [Build System](build-system.md) for details.
 - **Constants**: Timeouts and protocol limits must be defined in `BLE_CONSTANTS` (`types.ts`), not hard-coded as magic numbers
 - **Resource cleanup**: `dispose()` methods must release all resources (timers, listeners, BLE connections)
 
+## Security
+
+- Never commit secrets (API keys, tokens, credentials)
+- Validate all external input — BLE data, file content, user-provided configuration
+- Use `Buffer.readUInt16LE()` / `Buffer.readUInt8()` for binary parsing instead of manual bit-shifting
+- Sanitize file paths against path traversal when constructing from user input
+- Run `npm audit` regularly and review [SECURITY.md](../SECURITY.md) for known dependency issues
+
 ## Adding a New Board
 
 See [Board Configuration](board-configuration.md).

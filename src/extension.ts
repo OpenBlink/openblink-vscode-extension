@@ -79,7 +79,8 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   bleManager.onConnectionStateChanged((state) => {
-    ui.updateStatusBar(state, bleManager.deviceName, undefined, currentSlot);
+    const reconnect = state === 'reconnecting' ? bleManager.reconnectInfo : undefined;
+    ui.updateStatusBar(state, bleManager.deviceName, undefined, currentSlot, reconnect);
     tasksProvider.update({ connected: bleManager.isConnected });
     deviceInfoProvider.update({
       connected: bleManager.isConnected,
@@ -212,7 +213,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Connect to a device that was found during the current scan.
-    vscode.commands.registerCommand('openblink.connectScannedDevice', async (deviceId: string) => {
+    vscode.commands.registerCommand('openblink.connectScannedDevice', async (deviceId: unknown) => {
+      if (typeof deviceId !== 'string' || deviceId.length === 0) {
+        vscode.window.showErrorMessage(l10n.t('Invalid device ID'));
+        return;
+      }
       try {
         devicesProvider.updateConnection('connecting', deviceId);
         await bleManager.connectById(deviceId);
@@ -225,7 +230,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Connect to a previously saved device.  If the device is not in the
     // current discovered list, a scan is triggered first and we wait for
     // the device to appear (or the scan to complete).
-    vscode.commands.registerCommand('openblink.connectSavedDevice', async (deviceId: string) => {
+    vscode.commands.registerCommand('openblink.connectSavedDevice', async (deviceId: unknown) => {
+      if (typeof deviceId !== 'string' || deviceId.length === 0) {
+        vscode.window.showErrorMessage(l10n.t('Invalid device ID'));
+        return;
+      }
       if (!bleManager.discoveredDevices.has(deviceId)) {
         try {
           ui.log(`[BLE] ${l10n.t('Scanning to find saved device...')}`);
