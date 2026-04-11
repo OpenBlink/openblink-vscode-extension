@@ -1,11 +1,28 @@
-out
-dist
-node_modules
-.vscode-test/
-*.vsix
+# Emscripten/mruby intermediate build artifacts
+resources/wasm_build/
 
-# .vscode/
+# Compiled output
 out/
+dist/
+
+# Dependencies
 node_modules/
-/extract
+
+# VSCode extension packaging
+*.vsix
+.vscode-test/
+extract/
 *.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# User workspace files (for testing)
+app.rb
+*.mrb
+
+# Editor
+*.swp
+*.swo
+*~

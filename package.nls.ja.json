@@ -1,0 +1,23 @@
+{
+  "displayName": "OpenBlink VSCode Extension",
+  "description": "BLEをつかって、マイコンにプログラムをおくれます — IDEからBuild & Blink",
+  "command.connectDevice": "デバイスにつなぐ",
+  "command.disconnectDevice": "デバイスからはなれる",
+  "command.buildAndBlink": "Build & Blink",
+  "command.saveAndBuildAndBlink": "ほぞんして Build & Blink",
+  "command.softReset": "ソフトリセット",
+  "command.selectSourceFile": "ソースファイルをえらぶ",
+  "command.selectBoard": "ボードをえらぶ",
+  "command.selectSlot": "スロットをえらぶ",
+  "config.slot": "プログラムスロットばんごう (1 か 2)",
+  "config.sourceFile": "コンパイルする Ruby ファイル (ワークスペースからのパス)",
+  "config.board": "つかうボードのなまえ",
+  "command.scanDevices": "デバイスをさがす",
+  "command.stopScan": "スキャンをとめる",
+  "command.forgetDevice": "デバイスをわすれる",
+  "view.devices": "デバイス",
+  "view.tasks": "タスク",
+  "view.deviceInfo": "デバイスじょうほう",
+  "view.metrics": "メトリクス",
+  "view.boardReference": "ボードリファレンス"
+}
