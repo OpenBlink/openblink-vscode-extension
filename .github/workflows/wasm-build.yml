@@ -1,0 +1,49 @@
+name: WASM Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mruby_build_config.rb'
+      - 'Makefile'
+      - 'vendor/mruby/**'
+  workflow_dispatch:
+
+jobs:
+  build-mrbc-wasm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 5.0.5
+
+      - name: Verify Emscripten
+        run: emcc --version
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Build mrbc WASM
+        run: make mrbc
+
+      - name: Verify output
+        run: |
+          ls -la resources/wasm/mrbc.js
+          ls -la resources/wasm/mrbc.wasm
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrbc-wasm
+          path: |
+            resources/wasm/mrbc.js
+            resources/wasm/mrbc.wasm
+          retention-days: 30
