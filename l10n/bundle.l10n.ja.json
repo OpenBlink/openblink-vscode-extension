@@ -47,5 +47,14 @@
   "No board selected": "ボードがえらばれていません",
   "Connection timeout": "せつぞくがタイムアウトしました",
   "Compiler initialization failed: {0}": "コンパイラのしょきかにしっぱいしました: {0}",
-  "Build already in progress": "ビルドがすでにじっこうちゅうです"
+  "Build already in progress": "ビルドがすでにじっこうちゅうです",
+  "Copy this MCP server configuration to your IDE's MCP config file.": "この MCP サーバーのせっていを IDE の MCP せっていファイルにコピーしてください。",
+  "Enabled": "ゆうこう",
+  "Disabled": "むこう",
+  "Status File": "ステータスファイル",
+  "Console Log": "コンソールログ",
+  "Last Request": "さいごのリクエスト",
+  "Last Result": "さいごのけっか",
+  "Success": "せいこう",
+  "Failed": "しっぱい"
 }

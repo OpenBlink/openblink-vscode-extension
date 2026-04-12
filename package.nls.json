@@ -18,5 +18,8 @@
   "view.tasks": "Tasks",
   "view.deviceInfo": "Device Info",
   "view.metrics": "Metrics",
-  "view.boardReference": "Board Reference"
+  "view.boardReference": "Board Reference",
+  "command.setupMcp": "Setup MCP Server",
+  "config.mcp.enabled": "Enable MCP (Model Context Protocol) integration for AI agent access to Build & Blink, device info, console output, metrics, and board reference",
+  "view.mcpStatus": "MCP Status"
 }
