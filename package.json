@@ -84,6 +84,11 @@
         "title": "%command.forgetDevice%",
         "category": "OpenBlink",
         "icon": "$(trash)"
+      },
+      {
+        "command": "openblink.setupMcp",
+        "title": "%command.setupMcp%",
+        "category": "OpenBlink"
       }
     ],
     "configuration": {
@@ -107,9 +112,20 @@
           "type": "string",
           "default": "",
           "description": "%config.board%"
+        },
+        "openblink.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.mcp.enabled%"
         }
       }
     },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "openblink.mcpServer",
+        "label": "OpenBlink"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -140,6 +156,10 @@
         {
           "id": "openblink-board-reference",
           "name": "%view.boardReference%"
+        },
+        {
+          "id": "openblink-mcp-status",
+          "name": "%view.mcpStatus%"
         }
       ]
     },
@@ -205,6 +225,8 @@
   },
   "dependencies": {
     "@abandonware/noble": "^1.9.2-26",
-    "@vscode/l10n": "^0.0.18"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vscode/l10n": "^0.0.18",
+    "zod": "^3.25.0"
   }
 }
