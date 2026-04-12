@@ -120,7 +120,12 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   bleManager.onConsoleOutput((message) => {
-    ui.log(`[DEVICE] ${message}`);
+    for (const line of message.split('\n')) {
+      const trimmed = line.replace(/\r$/, '');
+      if (trimmed.length > 0) {
+        ui.log(`[DEVICE] ${trimmed}`);
+      }
+    }
   });
 
   bleManager.onLog((message) => {
