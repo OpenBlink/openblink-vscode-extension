@@ -4,7 +4,6 @@
   "command.connectDevice": "Connect Device",
   "command.disconnectDevice": "Disconnect Device",
   "command.buildAndBlink": "Build & Blink",
-  "command.saveAndBuildAndBlink": "Save & Build & Blink",
   "command.softReset": "Soft Reset",
   "command.selectSourceFile": "Select Source File",
   "command.selectBoard": "Select Board",

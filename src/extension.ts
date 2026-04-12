@@ -31,6 +31,10 @@ let boardReferenceProvider: ui.BoardReferenceTreeProvider;
 let currentSourceFile: string;
 /** @brief Active program slot on the target device (1 or 2). */
 let currentSlot: number;
+/** @brief Guard flag to prevent overlapping build-and-blink operations. */
+let isBuilding = false;
+/** @brief URIs of files being saved manually (not by auto-save). */
+const pendingManualSave = new Set<string>();
 
 /**
  * @brief Extension activation entry point.
@@ -41,6 +45,12 @@ let currentSlot: number;
  * board definitions, and the mruby WASM compiler.  Restores saved devices
  * from `globalState` and registers all user-facing commands, including
  * scan start/stop, device connection by ID, and device forget.
+ *
+ * Registers an `onDidSaveTextDocument` listener that automatically triggers
+ * a build-and-blink cycle when the user saves a `.rb` file that is currently
+ * focused in the active editor.  Background saves (e.g. `files.autoSave`,
+ * format-on-save of non-focused files) are ignored to prevent unintended
+ * BLE transfers.
  *
  * Also registers a `onDidChangeConfiguration` listener so that changes to
  * `openblink.sourceFile`, `openblink.slot`, and `openblink.board` made
@@ -154,6 +164,40 @@ export function activate(context: vscode.ExtensionContext) {
     ui.log(`[SYSTEM] Compiler initialization failed: ${msg}`);
     vscode.window.showErrorMessage(l10n.t('Compiler initialization failed: {0}', msg));
   });
+
+  // Auto build-and-blink when the user manually saves a .rb file that is
+  // currently focused in the editor.  Ignores background saves (e.g.
+  // files.autoSave, format-on-save of non-focused files) to avoid
+  // unintended BLE transfers.
+  //
+  // onWillSaveTextDocument fires *before* the save and exposes the
+  // save reason (Manual vs AfterDelay/FocusOut).  We record manual
+  // saves in pendingManualSave and check it in onDidSaveTextDocument.
+  context.subscriptions.push(
+    vscode.workspace.onWillSaveTextDocument((e) => {
+      if (e.reason === vscode.TextDocumentSaveReason.Manual) {
+        const key = e.document.uri.toString();
+        pendingManualSave.add(key);
+        // Safety: remove stale entry if onDidSaveTextDocument never fires
+        // (e.g. save fails due to a disk error).
+        setTimeout(() => { pendingManualSave.delete(key); }, 5000);
+      }
+    }),
+    vscode.workspace.onDidSaveTextDocument(async (document) => {
+      const key = document.uri.toString();
+      if (!pendingManualSave.delete(key)) { return; }
+      if (!document.fileName.endsWith('.rb')) { return; }
+      const activeDoc = vscode.window.activeTextEditor?.document;
+      if (!activeDoc || activeDoc.uri.toString() !== key) { return; }
+      try {
+        await buildAndBlink(context, document.uri, { silent: true });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        ui.log(`[SYSTEM] Build error: ${msg}`);
+        vscode.window.showErrorMessage(msg);
+      }
+    }),
+  );
 
   // Listen for configuration changes
   context.subscriptions.push(
@@ -303,20 +347,6 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('openblink.saveAndBuildAndBlink', async () => {
-      try {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) { return; }
-        if (!editor.document.fileName.endsWith('.rb')) { return; }
-        await editor.document.save();
-        await buildAndBlink(context, editor.document.uri);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        ui.log(`[SYSTEM] Build error: ${msg}`);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
     vscode.commands.registerCommand('openblink.softReset', async () => {
       const programChar = bleManager.getProgramCharacteristic();
       if (!bleManager.isConnected || !programChar) {
@@ -391,6 +421,35 @@ export function activate(context: vscode.ExtensionContext) {
 /**
  * @brief Compile the given Ruby source file and transfer the bytecode over BLE.
  *
+ * Acts as a concurrency guard around {@link buildAndBlinkInner}.  If a build
+ * is already in progress, the call is silently skipped to prevent overlapping
+ * BLE transfers that could corrupt the protocol stream.
+ *
+ * @param context    Extension context (unused here but kept for API symmetry).
+ * @param sourceUri  URI of the Ruby source file to compile.
+ * @param options    Optional settings.  When `silent` is true, the concurrency
+ *                   skip does not show a user-facing warning (used for
+ *                   auto-triggered builds from the save listener).
+ */
+async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri, options?: { silent?: boolean }): Promise<void> {
+  if (isBuilding) {
+    ui.log('[SYSTEM] Build already in progress, skipping.');
+    if (!options?.silent) {
+      vscode.window.showWarningMessage(l10n.t('Build already in progress'));
+    }
+    return;
+  }
+  isBuilding = true;
+  try {
+    await buildAndBlinkInner(context, sourceUri);
+  } finally {
+    isBuilding = false;
+  }
+}
+
+/**
+ * @brief Inner implementation of build-and-blink.
+ *
  * Reads the source file, compiles it with mrbc, and (if a device is
  * connected) sends the resulting bytecode to the selected program slot.
  * Updates diagnostics, metrics, and the status bar accordingly.
@@ -398,7 +457,7 @@ export function activate(context: vscode.ExtensionContext) {
  * @param context    Extension context (unused here but kept for API symmetry).
  * @param sourceUri  URI of the Ruby source file to compile.
  */
-async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri): Promise<void> {
+async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: vscode.Uri): Promise<void> {
   try {
     await vscode.workspace.fs.stat(sourceUri);
   } catch {

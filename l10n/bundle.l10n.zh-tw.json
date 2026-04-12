@@ -45,5 +45,7 @@
   "Device Name": "裝置名稱",
   "Device ID": "裝置ID",
   "No board selected": "未選擇開發板",
-  "Connection timeout": "連接逾時"
+  "Connection timeout": "連接逾時",
+  "Compiler initialization failed: {0}": "編譯器初始化失敗: {0}",
+  "Build already in progress": "建置正在進行中"
 }

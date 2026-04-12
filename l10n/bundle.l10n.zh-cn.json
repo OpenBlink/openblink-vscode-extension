@@ -45,5 +45,7 @@
   "Device Name": "设备名称",
   "Device ID": "设备ID",
   "No board selected": "未选择开发板",
-  "Connection timeout": "连接超时"
+  "Connection timeout": "连接超时",
+  "Compiler initialization failed: {0}": "编译器初始化失败: {0}",
+  "Build already in progress": "构建正在进行中"
 }

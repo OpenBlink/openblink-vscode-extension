@@ -45,5 +45,7 @@
   "Device Name": "デバイスなまえ",
   "Device ID": "デバイスID",
   "No board selected": "ボードがえらばれていません",
-  "Connection timeout": "せつぞくがタイムアウトしました"
+  "Connection timeout": "せつぞくがタイムアウトしました",
+  "Compiler initialization failed: {0}": "コンパイラのしょきかにしっぱいしました: {0}",
+  "Build already in progress": "ビルドがすでにじっこうちゅうです"
 }

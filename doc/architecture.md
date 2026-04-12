@@ -52,7 +52,10 @@ graph TB
 
 ## Data Flow: Build & Blink
 
-The currently active `.rb` file in the editor is always used for compilation.
+When the user saves a `.rb` file that is focused in the active editor, an
+`onDidSaveTextDocument` listener triggers the build-and-blink cycle.  A
+concurrency guard (`isBuilding`) prevents overlapping operations — if a build
+is already in progress the new request is silently skipped.
 
 ```mermaid
 sequenceDiagram
@@ -65,8 +68,10 @@ sequenceDiagram
     participant Dev as OpenBlink Device
 
     User->>VSCode: Save active .rb file (Ctrl+S / Cmd+S)
-    VSCode->>Ext: saveAndBuildAndBlink(activeEditor.document.uri)
-    Ext->>Ext: Read active file content
+    VSCode->>Ext: onDidSaveTextDocument(document)
+    Ext->>Ext: Guard: active editor matches saved file?
+    Ext->>Ext: Guard: isBuilding? (skip if true)
+    Ext->>Ext: Read saved file content
     Ext->>Comp: compile(rubyCode)
     Comp->>WASM: FS.writeFile → _main → FS.readFile
     WASM-->>Comp: .mrb bytecode
@@ -84,3 +89,5 @@ sequenceDiagram
 ```
 
 If the device is not connected, compilation still runs and metrics are recorded, but the BLE transfer is skipped with a warning.
+
+Background saves (e.g. `files.autoSave`, format-on-save of non-focused files) do not trigger a build.  The extension uses `onWillSaveTextDocument` to record saves whose reason is `Manual` and ignores all others, ensuring BLE transfers only occur from explicit user action.
