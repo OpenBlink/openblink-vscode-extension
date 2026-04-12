@@ -45,5 +45,7 @@
   "Device Name": "Device Name",
   "Device ID": "Device ID",
   "No board selected": "No board selected",
-  "Connection timeout": "Connection timeout"
+  "Connection timeout": "Connection timeout",
+  "Compiler initialization failed: {0}": "Compiler initialization failed: {0}",
+  "Build already in progress": "Build already in progress"
 }

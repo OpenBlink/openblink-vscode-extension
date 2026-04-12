@@ -38,11 +38,6 @@
         "category": "OpenBlink"
       },
       {
-        "command": "openblink.saveAndBuildAndBlink",
-        "title": "%command.saveAndBuildAndBlink%",
-        "category": "OpenBlink"
-      },
-      {
         "command": "openblink.softReset",
         "title": "%command.softReset%",
         "category": "OpenBlink"
@@ -115,14 +110,6 @@
         }
       }
     },
-    "keybindings": [
-      {
-        "command": "openblink.saveAndBuildAndBlink",
-        "key": "ctrl+s",
-        "mac": "cmd+s",
-        "when": "editorTextFocus && resourceExtname == .rb"
-      }
-    ],
     "viewsContainers": {
       "activitybar": [
         {

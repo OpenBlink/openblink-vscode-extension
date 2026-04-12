@@ -4,7 +4,6 @@
   "command.connectDevice": "デバイスにつなぐ",
   "command.disconnectDevice": "デバイスからはなれる",
   "command.buildAndBlink": "Build & Blink",
-  "command.saveAndBuildAndBlink": "ほぞんして Build & Blink",
   "command.softReset": "ソフトリセット",
   "command.selectSourceFile": "ソースファイルをえらぶ",
   "command.selectBoard": "ボードをえらぶ",

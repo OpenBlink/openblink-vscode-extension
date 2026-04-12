@@ -4,7 +4,6 @@
   "command.connectDevice": "連接裝置",
   "command.disconnectDevice": "中斷連接",
   "command.buildAndBlink": "Build & Blink",
-  "command.saveAndBuildAndBlink": "儲存並 Build & Blink",
   "command.softReset": "軟體重設",
   "command.selectSourceFile": "選擇原始檔",
   "command.selectBoard": "選擇開發板",
