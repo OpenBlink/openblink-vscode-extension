@@ -133,30 +133,48 @@ export function setEnabled(value: boolean): void {
  * @brief Shape of the `status.json` file written to `.openblink/`.
  */
 export interface McpStatus {
+  /** @brief BLE connection state and device details. */
   connection: {
+    /** @brief Current connection state. */
     state: ConnectionState;
+    /** @brief Advertised local name of the connected device, or null. */
     deviceName: string | null;
+    /** @brief Noble peripheral identifier of the connected device, or null. */
     deviceId: string | null;
+    /** @brief Negotiated BLE MTU in bytes. */
     mtu: number;
   };
+  /** @brief Latest and aggregate build/transfer metrics. */
   metrics: {
+    /** @brief Values from the most recent build cycle. */
     latest: MetricsData;
+    /** @brief Rolling min/avg/max statistics. */
     stats: {
       compile: MetricsStats;
       transfer: MetricsStats;
       size: MetricsStats;
     };
   };
+  /** @brief Currently selected board, or null if none is selected. */
   board: {
+    /** @brief Internal board identifier (e.g. "m5stamps3"). */
     name: string;
+    /** @brief Human-readable board name shown in the UI. */
     displayName: string;
+    /** @brief Absolute filesystem path to the board's reference Markdown file. */
     referencePath: string;
   } | null;
+  /** @brief Workspace-relative path of the Ruby source file to compile. */
   sourceFile: string;
+  /** @brief Active program slot on the target device (1 or 2). */
   slot: number;
+  /** @brief Result of the most recent build, or null if no build has occurred. */
   lastBuild: {
+    /** @brief Whether the build succeeded. */
     success: boolean;
+    /** @brief ISO 8601 timestamp of the build completion. */
     timestamp: string;
+    /** @brief Error message if the build failed. */
     error?: string;
   } | null;
 }
@@ -298,11 +316,17 @@ function flushConsole(): void {
  * @brief Shape of the `result.json` file written after a triggered build.
  */
 export interface McpBuildResult {
+  /** @brief Unique request identifier matching the trigger that initiated this build. */
   requestId: string;
+  /** @brief Whether the build and transfer succeeded. */
   success: boolean;
+  /** @brief Compilation wall-clock time in milliseconds (present on success). */
   compileTime?: number;
+  /** @brief BLE transfer wall-clock time in milliseconds (present on success with device). */
   transferTime?: number;
+  /** @brief Compiled program size in bytes (present on success). */
   programSize?: number;
+  /** @brief Human-readable error message (present on failure). */
   error?: string;
 }
 
@@ -330,7 +354,9 @@ export function writeBuildResult(result: McpBuildResult): void {
  * @brief Shape of the `trigger.json` file written by the MCP server.
  */
 export interface McpBuildTrigger {
+  /** @brief Workspace-relative path of the .rb file to compile (defaults to openblink.sourceFile setting). */
   file?: string;
+  /** @brief Unique request identifier used to correlate the trigger with its result. */
   requestId: string;
 }
 
