@@ -33,4 +33,3 @@ jobs:
 
       - name: Test
         run: npm test
-        continue-on-error: true
