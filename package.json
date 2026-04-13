@@ -29,6 +29,13 @@
     "url": "https://github.com/OpenBlink/openblink-vscode-extension/issues"
   },
   "l10n": "./l10n",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "This extension compiles and transfers code to hardware devices over BLE. It requires a trusted workspace."
+    },
+    "virtualWorkspaces": false
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
