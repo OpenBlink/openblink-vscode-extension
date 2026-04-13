@@ -387,9 +387,16 @@ function startTriggerWatcher(): void {
   const handleTrigger = async () => {
     const triggerPath = path.join(dir, 'trigger.json');
     try {
-      if (!fs.existsSync(triggerPath)) { return; }
-      const raw = fs.readFileSync(triggerPath, 'utf-8');
-      fs.unlinkSync(triggerPath);
+      // Read-then-unlink atomically: if the file was already consumed by a
+      // concurrent onDidCreate/onDidChange handler, readFileSync throws and
+      // we silently skip (no TOCTOU double-processing).
+      let raw: string;
+      try {
+        raw = fs.readFileSync(triggerPath, 'utf-8');
+        fs.unlinkSync(triggerPath);
+      } catch {
+        return; // File already consumed or does not exist
+      }
       const trigger: McpBuildTrigger = JSON.parse(raw);
       if (!trigger.requestId || typeof trigger.requestId !== 'string') { return; }
       if (onTriggerCallback) {
@@ -398,8 +405,13 @@ function startTriggerWatcher(): void {
           ?? vscode.workspace.getConfiguration('openblink').get<string>('sourceFile')
           ?? 'app.rb';
         const filePath = ws ? path.join(ws.uri.fsPath, sourceFile) : sourceFile;
-        // Guard against path traversal: resolved path must stay within the workspace
-        if (ws && !path.resolve(filePath).startsWith(ws.uri.fsPath + path.sep) && path.resolve(filePath) !== ws.uri.fsPath) { return; }
+        // Guard against path traversal: resolved path must be inside the workspace tree.
+        // The trailing path.sep ensures '/foo/bar-evil' doesn't match workspace '/foo/bar'.
+        if (ws) {
+          const resolvedFile = path.resolve(filePath);
+          const wsRoot = ws.uri.fsPath.endsWith(path.sep) ? ws.uri.fsPath : ws.uri.fsPath + path.sep;
+          if (!resolvedFile.startsWith(wsRoot)) { return; }
+        }
         await onTriggerCallback(filePath, trigger.requestId);
       }
     } catch {
@@ -448,6 +460,7 @@ export function initialize(context: vscode.ExtensionContext): void {
   // Dispose watcher on deactivation
   context.subscriptions.push({
     dispose: () => {
+      enabled = false;
       triggerWatcher?.dispose();
       triggerWatcher = undefined;
       if (statusTimer) { clearTimeout(statusTimer); }
