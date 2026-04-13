@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Strip carriage returns and control characters (except printable ASCII
       // and common whitespace) to prevent terminal/prompt injection from
       // malicious BLE devices.
-      const sanitized = line.replace(/\r$/, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+      const sanitized = line.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
       if (sanitized.length > 0) {
         ui.log(`[DEVICE] ${sanitized}`);
         ui.appendConsoleLog(`[DEVICE] ${sanitized}`);

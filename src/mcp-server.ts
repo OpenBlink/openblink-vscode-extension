@@ -110,7 +110,7 @@ server.tool(
   'Requires an OpenBlink device to be connected via BLE for transfer (compilation works without a device). ' +
   'After success, use get_console_output to verify the program is running correctly.',
   {
-    file: z.string().optional().describe(
+    file: z.string().min(1).optional().describe(
       'Path to the .rb source file relative to the workspace root. ' +
       'If omitted, the configured openblink.sourceFile setting is used (default: app.rb).'
     ),
@@ -123,7 +123,11 @@ server.tool(
     // mcp-bridge applies a second layer of defense (workspace root prefix
     // check using path.sep).
     if (file !== undefined) {
-      if (path.isAbsolute(file) || file.includes('..')) {
+      const hasParentSegment = file
+        .split(/[\\/]+/)
+        .some(segment => segment === '..');
+
+      if (path.isAbsolute(file) || hasParentSegment) {
         return {
           content: [{ type: 'text' as const, text: `Invalid file path: must be a relative workspace path without '..' segments.` }],
           isError: true,
@@ -317,19 +321,26 @@ server.tool(
     }
 
     // Validate referencePath to prevent arbitrary file reads via a tampered status.json.
-    // 1. Must resolve cleanly with no '..' segments.
+    // 1. Must not contain any '..' path components.
     // 2. Must be a Markdown file (.md) to restrict to documentation.
     // 3. Must reside inside the extension directory (OPENBLINK_EXTENSION_DIR).
-    const refPath = path.resolve(status.board.referencePath);
-    if (refPath.includes('..') || !refPath.endsWith('.md')) {
+    const referencePathInput = status.board.referencePath;
+    const normalizedRefPath = path.normalize(referencePathInput);
+    const refPathSegments = normalizedRefPath
+      .split(/[\\/]+/)
+      .filter((segment) => segment.length > 0);
+    const refPath = path.resolve(referencePathInput);
+    if (refPathSegments.includes('..') || path.extname(refPath).toLowerCase() !== '.md') {
       return { content: [{ type: 'text' as const, text: `Board reference path is invalid or not a Markdown file.` }], isError: true };
     }
     const extensionDir = process.env.OPENBLINK_EXTENSION_DIR;
-    if (extensionDir) {
-      const normalizedExtDir = extensionDir.endsWith(path.sep) ? extensionDir : extensionDir + path.sep;
-      if (!refPath.startsWith(normalizedExtDir)) {
-        return { content: [{ type: 'text' as const, text: `Board reference path is outside the extension directory.` }], isError: true };
-      }
+    if (!extensionDir) {
+      return { content: [{ type: 'text' as const, text: `Extension directory is not configured. Cannot verify board reference path.` }], isError: true };
+    }
+    const resolvedExtensionDir = path.resolve(extensionDir);
+    const relativeRefPath = path.relative(resolvedExtensionDir, refPath);
+    if (relativeRefPath === '..' || relativeRefPath.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRefPath)) {
+      return { content: [{ type: 'text' as const, text: `Board reference path is outside the extension directory.` }], isError: true };
     }
     const refContent = readTextFile(refPath);
     if (!refContent) {
@@ -353,10 +364,12 @@ server.tool(
 // These handlers log to stderr (visible in the MCP client's error stream)
 // and keep the process alive so the MCP client can report the failure.
 process.on('uncaughtException', (error) => {
-  process.stderr.write(`OpenBlink MCP server uncaught exception: ${error}\n`);
+  const detail = error instanceof Error && error.stack ? error.stack : String(error);
+  process.stderr.write(`OpenBlink MCP server uncaught exception: ${detail}\n`);
 });
 process.on('unhandledRejection', (reason) => {
-  process.stderr.write(`OpenBlink MCP server unhandled rejection: ${reason}\n`);
+  const detail = reason instanceof Error && reason.stack ? reason.stack : String(reason);
+  process.stderr.write(`OpenBlink MCP server unhandled rejection: ${detail}\n`);
 });
 
 async function main(): Promise<void> {

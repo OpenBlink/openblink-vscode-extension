@@ -387,9 +387,9 @@ function startTriggerWatcher(): void {
   const handleTrigger = async () => {
     const triggerPath = path.join(dir, 'trigger.json');
     try {
-      // Read-then-unlink atomically: if the file was already consumed by a
-      // concurrent onDidCreate/onDidChange handler, readFileSync throws and
-      // we silently skip (no TOCTOU double-processing).
+      // Best-effort consume: read the file and then remove it. If a concurrent
+      // onDidCreate/onDidChange handler already consumed it, one of these calls
+      // throws and we silently skip, avoiding an explicit existsSync TOCTOU check.
       let raw: string;
       try {
         raw = fs.readFileSync(triggerPath, 'utf-8');
@@ -406,11 +406,12 @@ function startTriggerWatcher(): void {
           ?? 'app.rb';
         const filePath = ws ? path.join(ws.uri.fsPath, sourceFile) : sourceFile;
         // Guard against path traversal: resolved path must be inside the workspace tree.
-        // The trailing path.sep ensures '/foo/bar-evil' doesn't match workspace '/foo/bar'.
+        // Uses path.relative to avoid platform-specific casing/separator issues with startsWith.
         if (ws) {
           const resolvedFile = path.resolve(filePath);
-          const wsRoot = ws.uri.fsPath.endsWith(path.sep) ? ws.uri.fsPath : ws.uri.fsPath + path.sep;
-          if (!resolvedFile.startsWith(wsRoot)) { return; }
+          const resolvedWsRoot = path.resolve(ws.uri.fsPath);
+          const rel = path.relative(resolvedWsRoot, resolvedFile);
+          if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) { return; }
         }
         await onTriggerCallback(filePath, trigger.requestId);
       }
