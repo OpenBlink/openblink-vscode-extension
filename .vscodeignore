@@ -5,14 +5,12 @@ vendor/**
 resources/wasm_build/**
 resources/wasm/**
 resources/boards/**
+resources/blink.svg
 node_modules/**
 !node_modules/@abandonware/**
 .gitmodules
 .github/**
 doc/**
-*.map
-*.ts
-!out/**
 tsconfig.json
 webpack.config.js
 eslint.config.*
@@ -21,3 +19,8 @@ mruby_build_config.rb
 mruby_build_config.rb.lock
 package-lock.json
 .DS_Store
+.gitignore
+app.rb
+SECURITY.md
+**/*.map
+**/*.ts
