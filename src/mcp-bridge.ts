@@ -387,9 +387,16 @@ function startTriggerWatcher(): void {
   const handleTrigger = async () => {
     const triggerPath = path.join(dir, 'trigger.json');
     try {
-      if (!fs.existsSync(triggerPath)) { return; }
-      const raw = fs.readFileSync(triggerPath, 'utf-8');
-      fs.unlinkSync(triggerPath);
+      // Best-effort consume: read the file and then remove it. If a concurrent
+      // onDidCreate/onDidChange handler already consumed it, one of these calls
+      // throws and we silently skip, avoiding an explicit existsSync TOCTOU check.
+      let raw: string;
+      try {
+        raw = fs.readFileSync(triggerPath, 'utf-8');
+        fs.unlinkSync(triggerPath);
+      } catch {
+        return; // File already consumed or does not exist
+      }
       const trigger: McpBuildTrigger = JSON.parse(raw);
       if (!trigger.requestId || typeof trigger.requestId !== 'string') { return; }
       if (onTriggerCallback) {
@@ -398,8 +405,14 @@ function startTriggerWatcher(): void {
           ?? vscode.workspace.getConfiguration('openblink').get<string>('sourceFile')
           ?? 'app.rb';
         const filePath = ws ? path.join(ws.uri.fsPath, sourceFile) : sourceFile;
-        // Guard against path traversal: resolved path must stay within the workspace
-        if (ws && !path.resolve(filePath).startsWith(ws.uri.fsPath + path.sep) && path.resolve(filePath) !== ws.uri.fsPath) { return; }
+        // Guard against path traversal: resolved path must be inside the workspace tree.
+        // Uses path.relative to avoid platform-specific casing/separator issues with startsWith.
+        if (ws) {
+          const resolvedFile = path.resolve(filePath);
+          const resolvedWsRoot = path.resolve(ws.uri.fsPath);
+          const rel = path.relative(resolvedWsRoot, resolvedFile);
+          if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) { return; }
+        }
         await onTriggerCallback(filePath, trigger.requestId);
       }
     } catch {
@@ -448,6 +461,7 @@ export function initialize(context: vscode.ExtensionContext): void {
   // Dispose watcher on deactivation
   context.subscriptions.push({
     dispose: () => {
+      enabled = false;
       triggerWatcher?.dispose();
       triggerWatcher = undefined;
       if (statusTimer) { clearTimeout(statusTimer); }

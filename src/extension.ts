@@ -133,10 +133,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   bleManager.onConsoleOutput((message) => {
     for (const line of message.split('\n')) {
-      const trimmed = line.replace(/\r$/, '');
-      if (trimmed.length > 0) {
-        ui.log(`[DEVICE] ${trimmed}`);
-        ui.appendConsoleLog(`[DEVICE] ${trimmed}`);
+      // Strip carriage returns and control characters (except printable ASCII
+      // and common whitespace) to prevent terminal/prompt injection from
+      // malicious BLE devices.
+      const sanitized = line.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
+      if (sanitized.length > 0) {
+        ui.log(`[DEVICE] ${sanitized}`);
+        ui.appendConsoleLog(`[DEVICE] ${sanitized}`);
       }
     }
     mcpBridge.scheduleConsoleWrite();
@@ -255,7 +258,7 @@ export function activate(context: vscode.ExtensionContext) {
               'OpenBlink',
               'node',
               [mcpServerModule],
-              { OPENBLINK_WORKSPACE: workspaceRoot },
+              { OPENBLINK_WORKSPACE: workspaceRoot, OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath },
               extensionVersion,
             ),
           ];
@@ -276,7 +279,7 @@ export function activate(context: vscode.ExtensionContext) {
           openblink: {
             command: 'node',
             args: [mcpServerPath],
-            env: { OPENBLINK_WORKSPACE: workspaceRoot },
+            env: { OPENBLINK_WORKSPACE: workspaceRoot, OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath },
           },
         },
       }, null, 2);
