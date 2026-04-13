@@ -56,5 +56,16 @@
   "Last Request": "さいごのリクエスト",
   "Last Result": "さいごのけっか",
   "Success": "せいこう",
-  "Failed": "しっぱい"
+  "Failed": "しっぱい",
+  "Invalid device ID": "デバイスIDがただしくありません",
+  "Scanning to find saved device...": "ほぞんしたデバイスをさがしています...",
+  "Searching...": "さがしています...",
+  "No devices found": "デバイスがみつかりません",
+  "No saved devices": "ほぞんしたデバイスはありません",
+  "Scanning...": "スキャンちゅう...",
+  "Discovered Devices": "みつかったデバイス",
+  "Saved Devices": "ほぞんしたデバイス",
+  "Connected": "せつぞくずみ",
+  "Connecting...": "せつぞくちゅう...",
+  "Device not found. Please scan again.": "デバイスがみつかりません。もういちどスキャンしてください。"
 }

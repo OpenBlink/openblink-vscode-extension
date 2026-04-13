@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - **Full modular rewrite** — Monolithic extension refactored into 7 focused modules (`extension.ts`, `compiler.ts`, `ble-manager.ts`, `protocol.ts`, `board-manager.ts`, `ui-manager.ts`, `types.ts`) plus MCP modules (`mcp-bridge.ts`, `mcp-server.ts`)
 - **Webpack dual-entry build** — Separate bundles for the extension and the standalone MCP server
-- **Removed auto-build on save** — Build & Blink is now triggered explicitly or via MCP/Cascade Hook
+- **Refined auto-build on save** — Build & Blink on save now only triggers for manual saves of the focused `.rb` file (ignores auto-save and background saves)
 - **Exclusive build control** — Concurrent build requests are serialized to prevent race conditions
 
 ### Fixed

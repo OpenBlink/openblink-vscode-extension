@@ -56,5 +56,16 @@
   "Last Request": "最近请求",
   "Last Result": "最近结果",
   "Success": "成功",
-  "Failed": "失败"
+  "Failed": "失败",
+  "Invalid device ID": "无效的设备ID",
+  "Scanning to find saved device...": "正在搜索已保存的设备...",
+  "Searching...": "搜索中...",
+  "No devices found": "未找到设备",
+  "No saved devices": "没有已保存的设备",
+  "Scanning...": "扫描中...",
+  "Discovered Devices": "发现的设备",
+  "Saved Devices": "已保存的设备",
+  "Connected": "已连接",
+  "Connecting...": "连接中...",
+  "Device not found. Please scan again.": "未找到设备。请重新扫描。"
 }
