@@ -12,9 +12,22 @@
     "url": "https://github.com/OpenBlink/openblink-vscode-extension"
   },
   "publisher": "OpenBlink",
+  "icon": "resources/icons/openblink.png",
   "categories": [
-    "Other"
+    "Other",
+    "Programming Languages"
   ],
+  "keywords": [
+    "mruby",
+    "ble",
+    "bluetooth",
+    "microcontroller",
+    "iot"
+  ],
+  "homepage": "https://github.com/OpenBlink/openblink-vscode-extension",
+  "bugs": {
+    "url": "https://github.com/OpenBlink/openblink-vscode-extension/issues"
+  },
   "l10n": "./l10n",
   "activationEvents": [
     "onStartupFinished"
@@ -218,6 +231,7 @@
     "@vscode/vsce": "^3.2.2",
     "copy-webpack-plugin": "^14.0.0",
     "eslint": "^10.2.0",
+    "ovsx": "^0.10.11",
     "ts-loader": "^9.5.2",
     "typescript": "^6.0.2",
     "webpack": "^5.98.0",
