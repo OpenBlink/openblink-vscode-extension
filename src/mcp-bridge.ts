@@ -26,7 +26,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ConnectionState, MetricsData, MetricsHistory, MetricsStats } from './types';
+import { ConnectionState, MetricsData, MetricsStats } from './types';
 import { getConsoleLog, log } from './ui-manager';
 
 // ============================================================================
@@ -183,7 +183,7 @@ export interface McpStatus {
 let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** @brief Cached status object, updated incrementally. */
-let currentStatus: McpStatus = {
+const currentStatus: McpStatus = {
   connection: { state: 'disconnected', deviceName: null, deviceId: null, mtu: 20 },
   metrics: {
     latest: {},

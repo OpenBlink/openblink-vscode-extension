@@ -60,7 +60,7 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm test
+        run: xvfb-run -a npm test
 
       - name: Package VSIX
         run: npx @vscode/vsce package
@@ -79,14 +79,6 @@ jobs:
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: '*.vsix'
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Verify publish results
         if: steps.vsce.outcome == 'failure' || steps.ovsx.outcome == 'failure'
         run: |
@@ -94,3 +86,11 @@ jobs:
           [ "${{ steps.vsce.outcome }}" = "failure" ] && echo "::error::VS Code Marketplace publish failed"
           [ "${{ steps.ovsx.outcome }}" = "failure" ] && echo "::error::Open VSX publish failed"
           exit 1
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

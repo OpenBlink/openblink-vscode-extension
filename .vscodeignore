@@ -5,7 +5,6 @@ vendor/**
 resources/wasm_build/**
 resources/wasm/**
 resources/boards/**
-resources/blink.svg
 node_modules/**
 !node_modules/@abandonware/**
 .gitmodules
