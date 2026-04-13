@@ -36,7 +36,7 @@ OpenBlink VSCode Extension brings [OpenBlink](https://github.com/OpenBlink/openb
 | Platform | BLE Support |
 |----------|-------------|
 | macOS | CoreBluetooth via noble |
-| Windows **Untested yet** | WinRT via noble |
+| Windows | WinRT via noble |
 | Linux  **Untested yet** | BlueZ via noble |
 | ChromeOS  **Untested yet** | BlueZ via Crostini (Linux container) |
 
