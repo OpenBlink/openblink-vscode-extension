@@ -47,5 +47,14 @@
   "No board selected": "No board selected",
   "Connection timeout": "Connection timeout",
   "Compiler initialization failed: {0}": "Compiler initialization failed: {0}",
-  "Build already in progress": "Build already in progress"
+  "Build already in progress": "Build already in progress",
+  "Copy this MCP server configuration to your IDE's MCP config file.": "Copy this MCP server configuration to your IDE's MCP config file.",
+  "Enabled": "Enabled",
+  "Disabled": "Disabled",
+  "Status File": "Status File",
+  "Console Log": "Console Log",
+  "Last Request": "Last Request",
+  "Last Result": "Last Result",
+  "Success": "Success",
+  "Failed": "Failed"
 }

@@ -18,5 +18,8 @@
   "view.tasks": "工作",
   "view.deviceInfo": "裝置資訊",
   "view.metrics": "指標",
-  "view.boardReference": "開發板參考"
+  "view.boardReference": "開發板參考",
+  "command.setupMcp": "設定 MCP 伺服器",
+  "config.mcp.enabled": "啟用 MCP (Model Context Protocol) 整合，允許 AI 代理存取 Build & Blink、裝置資訊、控制台輸出、指標和開發板參考",
+  "view.mcpStatus": "MCP 狀態"
 }

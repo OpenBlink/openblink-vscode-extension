@@ -70,6 +70,8 @@ src/
 ├── board-manager.ts    # Board configurations with runtime JSON validation
 ├── ui-manager.ts       # Output Channel, Status Bar, Diagnostics, TreeView providers
 │                       #   (Tasks, DeviceInfo, Metrics, Devices, BoardReference)
+├── mcp-bridge.ts       # File-based IPC between extension and MCP server
+├── mcp-server.ts       # Standalone stdio MCP server (5 tools for AI agents)
 └── types.ts            # Shared type definitions, BLE constants, SavedDevice
 ```
 

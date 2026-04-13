@@ -10,6 +10,7 @@ import { initCompiler, compile, parseDiagnostics } from './compiler';
 import { sendFirmware, sendReset } from './protocol';
 import * as boardManager from './board-manager';
 import * as ui from './ui-manager';
+import * as mcpBridge from './mcp-bridge';
 import { BLE_CONSTANTS, MetricsData, SavedDevice } from './types';
 
 /** @brief globalState key for persisted saved-device list. */
@@ -27,6 +28,8 @@ let deviceInfoProvider: ui.DeviceInfoTreeProvider;
 let metricsProvider: ui.MetricsTreeProvider;
 /** @brief Sidebar tree-view provider for selected board's API reference. */
 let boardReferenceProvider: ui.BoardReferenceTreeProvider;
+/** @brief Sidebar tree-view provider for MCP integration status. */
+let mcpStatusProvider: ui.McpStatusTreeProvider;
 /** @brief Workspace-relative path of the Ruby source file to compile. */
 let currentSourceFile: string;
 /** @brief Active program slot on the target device (1 or 2). */
@@ -81,6 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
   deviceInfoProvider = new ui.DeviceInfoTreeProvider();
   metricsProvider = new ui.MetricsTreeProvider();
   boardReferenceProvider = new ui.BoardReferenceTreeProvider();
+  mcpStatusProvider = new ui.McpStatusTreeProvider();
 
   // Initialize BLE manager
   bleManager = new BleManager();
@@ -99,6 +103,14 @@ export function activate(context: vscode.ExtensionContext) {
       mtu: bleManager.negotiatedMTU,
     });
     devicesProvider.updateConnection(state, bleManager.deviceId);
+
+    // Update MCP bridge with connection state
+    mcpBridge.updateConnectionStatus(
+      state,
+      bleManager.deviceName,
+      bleManager.deviceId,
+      bleManager.negotiatedMTU,
+    );
 
     // Auto-save device on successful connection
     if (state === 'connected' && bleManager.deviceId) {
@@ -124,8 +136,10 @@ export function activate(context: vscode.ExtensionContext) {
       const trimmed = line.replace(/\r$/, '');
       if (trimmed.length > 0) {
         ui.log(`[DEVICE] ${trimmed}`);
+        ui.appendConsoleLog(`[DEVICE] ${trimmed}`);
       }
     }
+    mcpBridge.scheduleConsoleWrite();
   });
 
   bleManager.onLog((message) => {
@@ -142,11 +156,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('openblink-device-info', deviceInfoProvider),
     vscode.window.registerTreeDataProvider('openblink-metrics', metricsProvider),
     vscode.window.registerTreeDataProvider('openblink-board-reference', boardReferenceProvider),
+    vscode.window.registerTreeDataProvider('openblink-mcp-status', mcpStatusProvider),
     { dispose: () => devicesProvider.dispose() },
     { dispose: () => tasksProvider.dispose() },
     { dispose: () => deviceInfoProvider.dispose() },
     { dispose: () => metricsProvider.dispose() },
-    { dispose: () => boardReferenceProvider.dispose() }
+    { dispose: () => boardReferenceProvider.dispose() },
+    { dispose: () => mcpStatusProvider.dispose() }
   );
 
   // Load boards
@@ -160,6 +176,121 @@ export function activate(context: vscode.ExtensionContext) {
   if (currentBoard) {
     boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(currentBoard));
   }
+
+  // ========================================================================
+  // MCP Bridge (file-based IPC for AI agent integration)
+  // ========================================================================
+
+  // Register MCP build trigger callback — invoked when the MCP server
+  // (or a Cascade Hook) writes a `trigger.json` file.
+  // NOTE: Must be registered BEFORE initialize() so that any existing
+  // trigger.json at startup is not consumed without being processed.
+  mcpBridge.onBuildTrigger(async (filePath: string, requestId: string) => {
+    ui.log(`[MCP] Build trigger received: ${filePath} (${requestId})`);
+    mcpStatusProvider.update({ lastTriggerTime: new Date(), lastTriggerRequestId: requestId });
+    try {
+      const sourceUri = vscode.Uri.file(filePath);
+      const buildResult = await buildAndBlink(context, sourceUri, { silent: true });
+
+      // Write build result for MCP server to consume
+      const history = ui.getMetricsHistory();
+      const lastCompile = history.compile.length > 0 ? history.compile[history.compile.length - 1] : undefined;
+      const lastTransfer = history.transfer.length > 0 ? history.transfer[history.transfer.length - 1] : undefined;
+      const lastSize = history.size.length > 0 ? history.size[history.size.length - 1] : undefined;
+
+      mcpBridge.writeBuildResult({
+        requestId,
+        success: buildResult.success,
+        compileTime: buildResult.success ? lastCompile : undefined,
+        transferTime: buildResult.success ? lastTransfer : undefined,
+        programSize: buildResult.success ? lastSize : undefined,
+        error: buildResult.error,
+      });
+      mcpStatusProvider.update({
+        lastResultTime: new Date(),
+        lastResultSuccess: buildResult.success,
+        lastResultError: buildResult.error,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      mcpBridge.writeBuildResult({ requestId, success: false, error: msg });
+      mcpStatusProvider.update({ lastResultTime: new Date(), lastResultSuccess: false, lastResultError: msg });
+    }
+  });
+
+  mcpBridge.initialize(context);
+
+  // Set initial MCP enabled state immediately after initialize() reads the
+  // setting, before any debounced writes can fire.
+  mcpStatusProvider.update({ mcpEnabled: mcpBridge.isEnabled() });
+
+  // Set up MCP write callbacks to update the MCP status tree view
+  mcpBridge.setWriteCallbacks({
+    onStatusWritten: () => mcpStatusProvider.update({ lastStatusWriteTime: new Date() }),
+    onConsoleWritten: () => mcpStatusProvider.update({ lastConsoleWriteTime: new Date() }),
+  });
+
+  // Set initial board status for MCP
+  if (currentBoard) {
+    mcpBridge.updateBoardStatus({
+      name: currentBoard.name,
+      displayName: currentBoard.displayName,
+      referencePath: boardManager.getLocalizedReferencePath(currentBoard),
+    });
+  }
+
+  // Register MCP Server Definition Provider for VS Code Copilot auto-discovery.
+  // This allows Copilot Agent Mode to discover and use the OpenBlink MCP server
+  // without any manual configuration in mcp.json.
+  if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
+    const mcpServerModule = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+
+    context.subscriptions.push(
+      vscode.lm.registerMcpServerDefinitionProvider('openblink.mcpServer', {
+        provideMcpServerDefinitions: async () => {
+          if (!mcpBridge.isEnabled()) { return []; }
+          return [
+            new vscode.McpStdioServerDefinition(
+              'OpenBlink',
+              'node',
+              [mcpServerModule],
+              { OPENBLINK_WORKSPACE: workspaceRoot },
+              extensionVersion,
+            ),
+          ];
+        },
+        resolveMcpServerDefinition: async (server: vscode.McpServerDefinition) => server,
+      }),
+    );
+  }
+
+  // Register setupMcp command — generates MCP configuration for Windsurf/Cursor/Cline
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openblink.setupMcp', async () => {
+      const mcpServerPath = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+
+      const configSnippet = JSON.stringify({
+        mcpServers: {
+          openblink: {
+            command: 'node',
+            args: [mcpServerPath],
+            env: { OPENBLINK_WORKSPACE: workspaceRoot },
+          },
+        },
+      }, null, 2);
+
+      const doc = await vscode.workspace.openTextDocument({
+        content: configSnippet,
+        language: 'json',
+      });
+      await vscode.window.showTextDocument(doc);
+      vscode.window.showInformationMessage(
+        l10n.t('Copy this MCP server configuration to your IDE\'s MCP config file.'),
+      );
+    }),
+  );
 
   // Initialize compiler
   initCompiler(context.extensionUri).then(() => {
@@ -210,12 +341,14 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('openblink.sourceFile')) {
         currentSourceFile = vscode.workspace.getConfiguration('openblink').get<string>('sourceFile') ?? 'app.rb';
         tasksProvider.update({ sourceFile: currentSourceFile });
+        mcpBridge.updateStatus({ sourceFile: currentSourceFile });
       }
       if (e.affectsConfiguration('openblink.slot')) {
         const raw = vscode.workspace.getConfiguration('openblink').get<number>('slot');
         currentSlot = (raw === 1 || raw === 2) ? raw : 2;
         tasksProvider.update({ slot: currentSlot });
         ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, undefined, currentSlot);
+        mcpBridge.updateStatus({ slot: currentSlot });
       }
       if (e.affectsConfiguration('openblink.board')) {
         const boards = boardManager.getBoards();
@@ -225,7 +358,19 @@ export function activate(context: vscode.ExtensionContext) {
           boardManager.setCurrentBoard(found);
           tasksProvider.update({ boardName: found.displayName });
           boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(found));
+          mcpBridge.updateBoardStatus({
+            name: found.name,
+            displayName: found.displayName,
+            referencePath: boardManager.getLocalizedReferencePath(found),
+          });
         }
+      }
+      // Dynamic MCP enable/disable
+      if (e.affectsConfiguration('openblink.mcp.enabled')) {
+        const newEnabled = vscode.workspace.getConfiguration('openblink').get<boolean>('mcp.enabled', true);
+        mcpBridge.setEnabled(newEnabled);
+        mcpStatusProvider.update({ mcpEnabled: newEnabled });
+        ui.log(`[MCP] Integration ${newEnabled ? 'enabled' : 'disabled'}.`);
       }
     }),
   );
@@ -436,17 +581,17 @@ export function activate(context: vscode.ExtensionContext) {
  *                   skip does not show a user-facing warning (used for
  *                   auto-triggered builds from the save listener).
  */
-async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri, options?: { silent?: boolean }): Promise<void> {
+async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri, options?: { silent?: boolean }): Promise<{ success: boolean; error?: string }> {
   if (isBuilding) {
     ui.log('[SYSTEM] Build already in progress, skipping.');
     if (!options?.silent) {
       vscode.window.showWarningMessage(l10n.t('Build already in progress'));
     }
-    return;
+    return { success: false, error: 'Build already in progress' };
   }
   isBuilding = true;
   try {
-    await buildAndBlinkInner(context, sourceUri);
+    return await buildAndBlinkInner(context, sourceUri);
   } finally {
     isBuilding = false;
   }
@@ -462,12 +607,14 @@ async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode
  * @param context    Extension context (unused here but kept for API symmetry).
  * @param sourceUri  URI of the Ruby source file to compile.
  */
-async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: vscode.Uri): Promise<void> {
+async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: vscode.Uri): Promise<{ success: boolean; error?: string }> {
   try {
     await vscode.workspace.fs.stat(sourceUri);
   } catch {
-    vscode.window.showErrorMessage(l10n.t('Source file not found: {0}', sourceUri.fsPath));
-    return;
+    const errorMsg = l10n.t('Source file not found: {0}', sourceUri.fsPath);
+    vscode.window.showErrorMessage(errorMsg);
+    mcpBridge.updateBuildResult(false, errorMsg);
+    return { success: false, error: errorMsg };
   }
 
   // Read source
@@ -486,7 +633,8 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
       ui.setDiagnostics(sourceUri, diagnostics);
     }
     vscode.window.showErrorMessage(l10n.t('Compilation failed'));
-    return;
+    mcpBridge.updateBuildResult(false, result.error ?? 'Compilation failed');
+    return { success: false, error: result.error ?? 'Compilation failed' };
   }
 
   ui.log(`[COMPILE] success: ${result.compileTime.toFixed(1)}ms, size: ${result.size} bytes`);
@@ -500,7 +648,14 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
     ui.recordMetrics(metrics);
     metricsProvider.updateMetrics(metrics);
     ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, metrics, currentSlot);
-    return;
+    const history = ui.getMetricsHistory();
+    mcpBridge.updateMetricsStatus(metrics, {
+      compile: ui.calculateStats(history.compile),
+      transfer: ui.calculateStats(history.transfer),
+      size: ui.calculateStats(history.size),
+    });
+    mcpBridge.updateBuildResult(false, 'Device is not connected');
+    return { success: false, error: 'Compiled successfully but device is not connected' };
   }
 
   const transferStart = performance.now();
@@ -516,13 +671,23 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
     ui.recordMetrics(metrics);
     metricsProvider.updateMetrics(metrics);
     ui.updateStatusBar('connected', bleManager.deviceName, metrics, currentSlot);
+    const history = ui.getMetricsHistory();
+    mcpBridge.updateMetricsStatus(metrics, {
+      compile: ui.calculateStats(history.compile),
+      transfer: ui.calculateStats(history.transfer),
+      size: ui.calculateStats(history.size),
+    });
+    mcpBridge.updateBuildResult(true);
 
     ui.log(`[COMPILE] ${l10n.t('Compilation successful: {0}ms, size: {1} bytes', result.compileTime.toFixed(1), String(result.size))}`);
     ui.log(`[TRANSFER] ${l10n.t('Transfer complete: {0}ms', transferTime.toFixed(1))}`);
+    return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     ui.log(`[TRANSFER] Error: ${msg}`);
     vscode.window.showErrorMessage(msg);
+    mcpBridge.updateBuildResult(false, msg);
+    return { success: false, error: msg };
   }
 }
 

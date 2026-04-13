@@ -18,5 +18,8 @@
   "view.tasks": "タスク",
   "view.deviceInfo": "デバイスじょうほう",
   "view.metrics": "メトリクス",
-  "view.boardReference": "ボードリファレンス"
+  "view.boardReference": "ボードリファレンス",
+  "command.setupMcp": "MCP サーバーをセットアップ",
+  "config.mcp.enabled": "MCP (Model Context Protocol) とうごうを ON にする — AI エージェントが Build & Blink、デバイスじょうほう、コンソール出力、メトリクス、ボードリファレンスにアクセスできるようにする",
+  "view.mcpStatus": "MCP ステータス"
 }

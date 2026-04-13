@@ -14,6 +14,11 @@ graph TB
         BLE["ble-manager.ts<br/>BLE Scan & Connection Manager"]
         PROTO["protocol.ts<br/>OpenBlink Protocol"]
         BOARD["board-manager.ts<br/>Board Configuration"]
+        BRIDGE["mcp-bridge.ts<br/>File-based IPC"]
+    end
+
+    subgraph "MCP Server (separate process)"
+        MCP["mcp-server.ts<br/>stdio transport"]
     end
 
     subgraph "WASM Runtime"
@@ -24,11 +29,16 @@ graph TB
         DEV["OpenBlink Device<br/>(mruby/c VM)"]
     end
 
+    subgraph "AI Agent"
+        AI["Cascade / Copilot /<br/>Cursor / Cline"]
+    end
+
     EXT --> UI
     EXT --> DEV_TV
     EXT --> COMP
     EXT --> BLE
     EXT --> BOARD
+    EXT --> BRIDGE
     BLE -->|onScanningStateChanged<br/>onDeviceDiscovered| DEV_TV
     BLE -->|onConnectionStateChanged| DEV_TV
     COMP --> MRBC
@@ -36,6 +46,8 @@ graph TB
     PROTO --> DEV
     DEV -->|Console Notifications| BLE
     BLE -->|Console Output| UI
+    BRIDGE <-->|.openblink/ files| MCP
+    AI <-->|MCP protocol| MCP
 ```
 
 ## Module Responsibilities
@@ -47,7 +59,9 @@ graph TB
 | BLE Manager | `ble-manager.ts` | Device scan (`startScan`/`stopScan`), connect (`connectById`), disconnect, reconnect, MTU negotiation with floor guard |
 | Protocol | `protocol.ts` | OpenBlink BLE protocol (D/P/L/R commands), CRC16, input validation (size/slot/MTU) |
 | Board Manager | `board-manager.ts` | Board configurations with runtime JSON validation, sample code, references (defaults to Generic board) |
-| UI Manager | `ui-manager.ts` | Output Channel, Status Bar, Diagnostics, TreeView providers (Tasks, DeviceInfo, Metrics, **Devices**, BoardReference) |
+| UI Manager | `ui-manager.ts` | Output Channel, Status Bar, Diagnostics, TreeView providers (Tasks, DeviceInfo, Metrics, **Devices**, BoardReference, **McpStatus**), console ring buffer |
+| MCP Bridge | `mcp-bridge.ts` | File-based IPC between extension and MCP server (debounced `status.json`, `openblink-console.log`, `trigger.json`, `result.json`) |
+| MCP Server | `mcp-server.ts` | Standalone stdio MCP server exposing 5 tools (`build_and_blink`, `get_device_info`, `get_console_output`, `get_metrics`, `get_board_reference`) |
 | Types | `types.ts` | Shared type definitions, BLE constants (`MIN_USABLE_MTU`, `CHARACTERISTIC_DISCOVERY_TIMEOUT`, etc.), `SavedDevice` |
 
 ## Data Flow: Build & Blink
@@ -91,3 +105,41 @@ sequenceDiagram
 If the device is not connected, compilation still runs and metrics are recorded, but the BLE transfer is skipped with a warning.
 
 Background saves (e.g. `files.autoSave`, format-on-save of non-focused files) do not trigger a build.  The extension uses `onWillSaveTextDocument` to record saves whose reason is `Manual` and ignores all others, ensuring BLE transfers only occur from explicit user action.
+
+## Data Flow: MCP Integration
+
+The MCP server runs as a separate stdio-based Node.js process, launched by the IDE's MCP client.  It communicates with the extension through JSON files in the `.openblink/` directory (file-based IPC).
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Agent
+    participant MCP as mcp-server.ts
+    participant FS as .openblink/ files
+    participant Ext as extension.ts
+    participant Bridge as mcp-bridge.ts
+
+    Note over Ext,Bridge: Extension writes state on events
+    Ext->>Bridge: updateConnectionStatus / updateMetricsStatus
+    Bridge->>FS: status.json (debounced 1s)
+    Ext->>Bridge: scheduleConsoleWrite
+    Bridge->>FS: openblink-console.log (debounced 2s)
+
+    Note over AI,MCP: AI reads device info
+    AI->>MCP: get_device_info()
+    MCP->>FS: read status.json
+    FS-->>MCP: connection state, metrics
+    MCP-->>AI: formatted response
+
+    Note over AI,Ext: AI triggers Build & Blink
+    AI->>MCP: build_and_blink(file: "app.rb")
+    MCP->>FS: write trigger.json
+    FS-->>Ext: FileSystemWatcher fires
+    Ext->>Ext: buildAndBlink()
+    Ext->>FS: write result.json
+    FS-->>MCP: read result.json (polling)
+    MCP-->>AI: build outcome
+```
+
+The `openblink.mcp.enabled` setting (default `true`) controls whether the MCP bridge writes IPC files and watches for triggers.  When disabled, no disk I/O occurs and the MCP server definition provider returns an empty array.  Existing IPC files are left on disk but become stale.
+
+For Windsurf, a Cascade Hook (`.windsurf/hooks.json` → `post_write_code`) automatically creates a `trigger.json` when Cascade edits a `.rb` file, providing transparent Build & Blink without explicit MCP tool calls.

@@ -45,6 +45,41 @@ export function log(message: string): void {
 }
 
 // ============================================================================
+// Console Output Buffer (for MCP integration)
+// ============================================================================
+
+/** @brief Maximum number of lines retained in the console output ring buffer. */
+const MAX_CONSOLE_BUFFER = 100;
+
+/** @brief Ring buffer for [DEVICE] console output lines, exposed to MCP server via file IPC. */
+const consoleBuffer: string[] = [];
+
+/**
+ * @brief Append a line to the in-memory console ring buffer.
+ *
+ * When the buffer exceeds {@link MAX_CONSOLE_BUFFER} lines, the oldest
+ * entries are discarded.  The MCP bridge reads this buffer via
+ * {@link getConsoleLog} to write it to the IPC file.
+ *
+ * @param line  A single console output line (without trailing newline).
+ */
+export function appendConsoleLog(line: string): void {
+  consoleBuffer.push(line);
+  if (consoleBuffer.length > MAX_CONSOLE_BUFFER) {
+    consoleBuffer.splice(0, consoleBuffer.length - MAX_CONSOLE_BUFFER);
+  }
+}
+
+/**
+ * @brief Return a snapshot of the console ring buffer.
+ * @returns An array of the most recent console output lines (up to
+ *          {@link MAX_CONSOLE_BUFFER}).
+ */
+export function getConsoleLog(): string[] {
+  return [...consoleBuffer];
+}
+
+// ============================================================================
 // Diagnostics
 // ============================================================================
 
@@ -782,6 +817,142 @@ export class BoardReferenceTreeProvider implements vscode.TreeDataProvider<vscod
     }
 
     return sections;
+  }
+
+  /** @brief Dispose the internal event emitter. */
+  dispose(): void { this._onDidChangeTreeData.dispose(); }
+}
+
+// ============================================================================
+// MCP Status TreeView
+// ============================================================================
+
+/**
+ * @brief TreeDataProvider that displays MCP integration status in the sidebar.
+ *
+ * Shows whether MCP is enabled, IPC file activity timestamps, the last
+ * build request received from the MCP server, and the last build result.
+ */
+export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  private mcpEnabled = true;
+  private lastTriggerTime: Date | null = null;
+  private lastTriggerRequestId: string | null = null;
+  private lastResultTime: Date | null = null;
+  private lastResultSuccess: boolean | null = null;
+  private lastResultError: string | undefined;
+  private lastStatusWriteTime: Date | null = null;
+  private lastConsoleWriteTime: Date | null = null;
+
+  /** @brief Trigger a tree view refresh. */
+  refresh(): void { this._onDidChangeTreeData.fire(); }
+
+  /**
+   * @brief Update displayed MCP status and refresh the tree view.
+   * @param opts  Partial set of properties to update.
+   */
+  update(opts: {
+    mcpEnabled?: boolean;
+    lastTriggerTime?: Date;
+    lastTriggerRequestId?: string;
+    lastResultTime?: Date;
+    lastResultSuccess?: boolean;
+    lastResultError?: string;
+    lastStatusWriteTime?: Date;
+    lastConsoleWriteTime?: Date;
+  }): void {
+    if (opts.mcpEnabled !== undefined) { this.mcpEnabled = opts.mcpEnabled; }
+    if (opts.lastTriggerTime !== undefined) { this.lastTriggerTime = opts.lastTriggerTime; }
+    if (opts.lastTriggerRequestId !== undefined) { this.lastTriggerRequestId = opts.lastTriggerRequestId; }
+    if (opts.lastResultTime !== undefined) { this.lastResultTime = opts.lastResultTime; }
+    if (opts.lastResultSuccess !== undefined) { this.lastResultSuccess = opts.lastResultSuccess; }
+    if (opts.lastResultError !== undefined) { this.lastResultError = opts.lastResultError; }
+    if (opts.lastStatusWriteTime !== undefined) { this.lastStatusWriteTime = opts.lastStatusWriteTime; }
+    if (opts.lastConsoleWriteTime !== undefined) { this.lastConsoleWriteTime = opts.lastConsoleWriteTime; }
+    this.refresh();
+  }
+
+  /** @brief Return the tree item itself (no transformation needed). */
+  getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
+
+  /**
+   * @brief Build the list of MCP status items for the view.
+   * @returns Array of tree items showing MCP integration state.
+   */
+  getChildren(): vscode.TreeItem[] {
+    const items: vscode.TreeItem[] = [];
+
+    // MCP enabled/disabled
+    const enabledItem = new vscode.TreeItem(
+      `MCP: ${this.mcpEnabled ? l10n.t('Enabled') : l10n.t('Disabled')}`
+    );
+    enabledItem.iconPath = this.mcpEnabled
+      ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
+      : new vscode.ThemeIcon('circle-slash');
+    enabledItem.command = { command: 'workbench.action.openSettings', title: '', arguments: ['openblink.mcp.enabled'] };
+    items.push(enabledItem);
+
+    if (!this.mcpEnabled) {
+      return items;
+    }
+
+    // Status file write time
+    const statusItem = new vscode.TreeItem(
+      `${l10n.t('Status File')}: ${this.fmtTime(this.lastStatusWriteTime)}`
+    );
+    statusItem.iconPath = new vscode.ThemeIcon(this.lastStatusWriteTime ? 'file-symlink-file' : 'file');
+    items.push(statusItem);
+
+    // Console log write time
+    const consoleItem = new vscode.TreeItem(
+      `${l10n.t('Console Log')}: ${this.fmtTime(this.lastConsoleWriteTime)}`
+    );
+    consoleItem.iconPath = new vscode.ThemeIcon(this.lastConsoleWriteTime ? 'output' : 'file');
+    items.push(consoleItem);
+
+    // Last build request (trigger from MCP server)
+    const triggerItem = new vscode.TreeItem(
+      `${l10n.t('Last Request')}: ${this.fmtTime(this.lastTriggerTime)}`
+    );
+    triggerItem.iconPath = new vscode.ThemeIcon('arrow-down');
+    if (this.lastTriggerRequestId) {
+      triggerItem.description = this.lastTriggerRequestId;
+    }
+    items.push(triggerItem);
+
+    // Last build result
+    const resultLabel = this.lastResultSuccess !== null
+      ? `${l10n.t('Last Result')}: ${this.lastResultSuccess ? l10n.t('Success') : l10n.t('Failed')}`
+      : `${l10n.t('Last Result')}: --`;
+    const resultItem = new vscode.TreeItem(resultLabel);
+    if (this.lastResultSuccess === true) {
+      resultItem.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'));
+    } else if (this.lastResultSuccess === false) {
+      resultItem.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
+    } else {
+      resultItem.iconPath = new vscode.ThemeIcon('circle-slash');
+    }
+    if (this.lastResultTime) {
+      resultItem.description = this.fmtTime(this.lastResultTime);
+    }
+    if (this.lastResultSuccess === false && this.lastResultError) {
+      resultItem.tooltip = this.lastResultError;
+    }
+    items.push(resultItem);
+
+    return items;
+  }
+
+  /**
+   * @brief Format a Date as a locale-appropriate time string.
+   * @param date  Date to format, or null.
+   * @returns Formatted time string or '--' if null.
+   */
+  private fmtTime(date: Date | null): string {
+    if (!date) { return '--'; }
+    return date.toLocaleTimeString();
   }
 
   /** @brief Dispose the internal event emitter. */

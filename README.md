@@ -29,6 +29,7 @@ OpenBlink VSCode Extension brings [OpenBlink](https://github.com/OpenBlink/openb
 - **Metrics** — Compile time, transfer time, and program size with min/avg/max statistics in the TreeView
 - **Multi-language UI** — English, やさしい日本語, 简体中文, 繁體中文
 - **AI-friendly** — Structured `[COMPILE]`/`[TRANSFER]`/`[DEVICE]`/`[BLE]` output for Windsurf Cascade integration
+- **MCP Integration** — Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server exposes Build & Blink, device info, console output, metrics, and board reference as AI agent tools (Windsurf, VS Code Copilot, Cursor, Cline), with a dedicated **MCP Status** sidebar view showing connection activity and build results
 
 ## Supported Platforms
 
@@ -63,6 +64,7 @@ The currently active `.rb` file in the editor is always the one that gets compil
 - [Build System](doc/build-system.md) — Emscripten / mrbc WASM build instructions
 - [Compiler](doc/compiler.md) — mrbc WASM compiler internals
 - [Board Configuration](doc/board-configuration.md) — How to add new board definitions
+- [MCP Integration](doc/mcp-integration.md) — AI agent setup for Windsurf, VS Code Copilot, Cursor, and Cline
 - [Internationalization](doc/i18n.md) — Multi-language support guide
 - [Contributing](doc/contributing.md) — Development environment setup
 - [Security](SECURITY.md) — Security policy and dependency audit

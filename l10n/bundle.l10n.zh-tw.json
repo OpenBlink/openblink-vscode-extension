@@ -47,5 +47,14 @@
   "No board selected": "未選擇開發板",
   "Connection timeout": "連接逾時",
   "Compiler initialization failed: {0}": "編譯器初始化失敗: {0}",
-  "Build already in progress": "建置正在進行中"
+  "Build already in progress": "建置正在進行中",
+  "Copy this MCP server configuration to your IDE's MCP config file.": "將此 MCP 伺服器設定複製到您 IDE 的 MCP 設定檔中。",
+  "Enabled": "已啟用",
+  "Disabled": "已停用",
+  "Status File": "狀態檔案",
+  "Console Log": "控制台日誌",
+  "Last Request": "最近請求",
+  "Last Result": "最近結果",
+  "Success": "成功",
+  "Failed": "失敗"
 }
