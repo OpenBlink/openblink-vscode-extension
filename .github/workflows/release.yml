@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
@@ -78,6 +81,7 @@ jobs:
         run: npm ci
 
       - name: Verify native binding
+        if: runner.os != 'Linux'
         shell: bash
         run: |
           echo "Noble native binding:"
@@ -131,7 +135,7 @@ jobs:
       - name: Publish to VS Code Marketplace
         id: vsce
         continue-on-error: true
-        run: npx @vscode/vsce publish --packagePath *.vsix
+        run: npx @vscode/vsce@3 publish --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
 
@@ -139,9 +143,11 @@ jobs:
         id: ovsx
         continue-on-error: true
         run: |
+          failed=0
           for vsix in *.vsix; do
-            npx ovsx publish "$vsix"
+            npx ovsx@0 publish "$vsix" || failed=1
           done
+          [ "$failed" -eq 0 ]
         env:
           OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
 
