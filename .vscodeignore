@@ -7,6 +7,9 @@ resources/wasm/**
 resources/boards/**
 node_modules/**
 !node_modules/@abandonware/**
+!node_modules/@abandonware/noble/lib/mac/native/**
+!node_modules/@abandonware/noble/lib/win/native/**
+!node_modules/node-gyp-build/**
 .gitmodules
 .github/**
 doc/**
