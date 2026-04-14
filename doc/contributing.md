@@ -126,7 +126,7 @@ See [Architecture — MCP Integration](architecture.md#data-flow-mcp-integration
 
 ## Releasing
 
-Releases are automated via GitHub Actions. Pushing a version tag triggers the workflow.
+Releases are automated via GitHub Actions. Pushing a version tag triggers the workflow, which builds **platform-specific VSIX files** and publishes them to all distribution channels.
 
 ### Prerequisites
 
@@ -145,21 +145,36 @@ git tag v<VERSION>
 git push origin v<VERSION>
 ```
 
-The CI pipeline (`.github/workflows/release.yml`) will automatically:
-- Build mrbc WASM from source
-- Run lint and tests
-- Package the VSIX
-- Publish to **VS Code Marketplace**
-- Publish to **Open VSX**
-- Create a **GitHub Release** with the VSIX attached
+### Release Pipeline
+
+The CI pipeline (`.github/workflows/release.yml`) runs a 3-job workflow:
+
+1. **`build-wasm`** — Builds mrbc WASM from source (Emscripten + Ruby)
+2. **`build`** (matrix ×4) — Runs `npm ci` on each OS to compile native BLE bindings, then `vsce package --target <platform>` to create platform-specific VSIXs:
+   - `darwin-arm64` (macOS Apple Silicon)
+   - `darwin-x64` (macOS Intel)
+   - `win32-x64` (Windows)
+   - `linux-x64` (Linux)
+3. **`publish`** — Downloads all VSIXs and publishes to:
+   - **VS Code Marketplace** (`vsce publish --packagePath *.vsix`)
+   - **Open VSX** (per-file loop)
+   - **GitHub Release** (all VSIX files attached)
+
+Lint and tests run on the Linux matrix runner.
+
+### User Experience
+
+End users do not need to be aware of the platform-specific packaging. VS Code Marketplace and Open VSX automatically serve the correct VSIX for the user's platform. For manual installation from GitHub Releases, users should select the file matching their platform.
+
+See [Build System — Platform-Specific VSIX Packaging](build-system.md#platform-specific-vsix-packaging) for technical details.
 
 ### Manual Release (if needed)
 
 ```bash
 npm run compile
-npx @vscode/vsce package
+npx @vscode/vsce package --target darwin-arm64   # or other target
 npx @vscode/vsce publish --packagePath *.vsix
-npx ovsx publish *.vsix -p <OVSX_PAT>
+npx ovsx publish <file>.vsix -p <OVSX_PAT>
 ```
 
 ## Adding a New Board
