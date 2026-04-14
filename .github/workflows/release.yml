@@ -70,14 +70,14 @@ jobs:
         continue-on-error: true
         run: npx @vscode/vsce publish --packagePath *.vsix
         env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSCE_PAT: ${{ secrets.AZURE_PAT }}
 
       - name: Publish to Open VSX
         id: ovsx
         continue-on-error: true
         run: npx ovsx publish *.vsix
         env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
 
       - name: Verify publish results
         if: steps.vsce.outcome == 'failure' || steps.ovsx.outcome == 'failure'
