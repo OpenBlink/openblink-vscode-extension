@@ -102,20 +102,26 @@ const server = new McpServer({
 // Tool: build_and_blink
 // ----------------------------------------------------------------------------
 
-server.tool(
-  'build_and_blink',
-  'Compile a Ruby (.rb) file with mruby and transfer the bytecode to a BLE-connected OpenBlink device. ' +
-  'Call this after editing a .rb file to deploy changes to the hardware. ' +
-  'Returns compile time, transfer time, program size, and success/error status. ' +
-  'Requires an OpenBlink device to be connected via BLE for transfer (compilation works without a device). ' +
-  'After success, use get_console_output to verify the program is running correctly.',
-  {
+server.registerTool('build_and_blink', {
+  description:
+    'Compile a Ruby (.rb) file with mruby and transfer the bytecode to a BLE-connected OpenBlink device. ' +
+    'Call this after editing a .rb file to deploy changes to the hardware. ' +
+    'Returns compile time, transfer time, program size, and success/error status. ' +
+    'Requires an OpenBlink device to be connected via BLE for transfer (compilation works without a device). ' +
+    'After success, use get_console_output to verify the program is running correctly.',
+  inputSchema: {
     file: z.string().min(1).optional().describe(
       'Path to the .rb source file relative to the workspace root. ' +
       'If omitted, the configured openblink.sourceFile setting is used (default: app.rb).'
     ),
   },
-  async ({ file }) => {
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}, async ({ file }) => {
     // Reject path-traversal attempts (absolute paths, '..' segments).
     // Backslashes are intentionally allowed because they are valid path
     // separators on Windows.  path.isAbsolute() already catches Windows
@@ -193,13 +199,19 @@ server.tool(
 // Tool: get_device_info
 // ----------------------------------------------------------------------------
 
-server.tool(
-  'get_device_info',
-  'Get the current BLE connection state and device information for the connected OpenBlink device. ' +
-  'Returns connection state (disconnected/connecting/connected/reconnecting), device name, device ID, and negotiated MTU. ' +
-  'Call this to check if a device is connected before running build_and_blink.',
-  {},
-  async () => {
+server.registerTool('get_device_info', {
+  description:
+    'Get the current BLE connection state and device information for the connected OpenBlink device. ' +
+    'Returns connection state (disconnected/connecting/connected/reconnecting), device name, device ID, and negotiated MTU. ' +
+    'Call this to check if a device is connected before running build_and_blink.',
+  inputSchema: {},
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}, async () => {
     const dir = getIpcDir();
     const status = readJsonFile<{ connection: { state: string; deviceName: string | null; deviceId: string | null; mtu: number } }>(
       path.join(dir, 'status.json'),
@@ -224,17 +236,23 @@ server.tool(
 // Tool: get_console_output
 // ----------------------------------------------------------------------------
 
-server.tool(
-  'get_console_output',
-  'Get recent console output from the connected OpenBlink device. ' +
-  'Returns up to 100 lines of the most recent [DEVICE] log messages. ' +
-  'Use this after build_and_blink to see runtime output, debug prints, and error messages from the mruby/c program running on the device.',
-  {
+server.registerTool('get_console_output', {
+  description:
+    'Get recent console output from the connected OpenBlink device. ' +
+    'Returns up to 100 lines of the most recent [DEVICE] log messages. ' +
+    'Use this after build_and_blink to see runtime output, debug prints, and error messages from the mruby/c program running on the device.',
+  inputSchema: {
     lines: z.number().int().min(1).max(100).optional().describe(
       'Maximum number of lines to return (1–100, default: all available, up to 100).'
     ),
   },
-  async ({ lines: maxLines }) => {
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}, async ({ lines: maxLines }) => {
     const dir = getIpcDir();
     const raw = readTextFile(path.join(dir, 'openblink-console.log'));
 
@@ -243,9 +261,8 @@ server.tool(
     }
 
     let logLines = raw.split('\n').filter(l => l.length > 0);
-    if (maxLines !== undefined && maxLines > 0) {
-      logLines = logLines.slice(-maxLines);
-    }
+    const cap = (maxLines !== undefined && maxLines > 0) ? maxLines : 100;
+    logLines = logLines.slice(-cap);
 
     return { content: [{ type: 'text' as const, text: logLines.join('\n') }] };
   },
@@ -255,13 +272,19 @@ server.tool(
 // Tool: get_metrics
 // ----------------------------------------------------------------------------
 
-server.tool(
-  'get_metrics',
-  'Get cumulative build and transfer metrics for the OpenBlink extension. ' +
-  'Returns the latest compile time, transfer time, program size, and min/avg/max statistics across recent builds. ' +
-  'Unlike build_and_blink (which returns only the current build metrics), this shows historical performance trends.',
-  {},
-  async () => {
+server.registerTool('get_metrics', {
+  description:
+    'Get cumulative build and transfer metrics for the OpenBlink extension. ' +
+    'Returns the latest compile time, transfer time, program size, and min/avg/max statistics across recent builds. ' +
+    'Unlike build_and_blink (which returns only the current build metrics), this shows historical performance trends.',
+  inputSchema: {},
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}, async () => {
     const dir = getIpcDir();
     const status = readJsonFile<{
       metrics: {
@@ -303,14 +326,20 @@ server.tool(
 // Tool: get_board_reference
 // ----------------------------------------------------------------------------
 
-server.tool(
-  'get_board_reference',
-  'Get the API reference documentation (Markdown) for the currently selected OpenBlink board. ' +
-  'Returns the board name and the full reference Markdown content describing available APIs ' +
-  '(LED, GPIO, Sleep, etc.) that can be used in mruby programs. ' +
-  'IMPORTANT: Always call this before writing or modifying mruby code to understand the available APIs.',
-  {},
-  async () => {
+server.registerTool('get_board_reference', {
+  description:
+    'Get the API reference documentation (Markdown) for the currently selected OpenBlink board. ' +
+    'Returns the board name and the full reference Markdown content describing available APIs ' +
+    '(LED, GPIO, Sleep, etc.) that can be used in mruby programs. ' +
+    'IMPORTANT: Always call this before writing or modifying mruby code to understand the available APIs.',
+  inputSchema: {},
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}, async () => {
     const dir = getIpcDir();
     const status = readJsonFile<{
       board: { name: string; displayName: string; referencePath: string } | null;
