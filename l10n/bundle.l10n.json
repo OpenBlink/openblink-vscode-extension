@@ -6,6 +6,7 @@
   "No device is currently connected": "No device is currently connected",
   "Device disconnected: {0}": "Device disconnected: {0}",
   "Reconnecting ({0}/{1})...": "Reconnecting ({0}/{1})...",
+  "Reconnecting...": "Reconnecting...",
   "Max reconnection attempts reached": "Max reconnection attempts reached",
   "Reconnected successfully": "Reconnected successfully",
   "Starting device search...": "Starting device search...",
@@ -56,5 +57,16 @@
   "Last Request": "Last Request",
   "Last Result": "Last Result",
   "Success": "Success",
-  "Failed": "Failed"
+  "Failed": "Failed",
+  "Invalid device ID": "Invalid device ID",
+  "Scanning to find saved device...": "Scanning to find saved device...",
+  "Searching...": "Searching...",
+  "No devices found": "No devices found",
+  "No saved devices": "No saved devices",
+  "Scanning...": "Scanning...",
+  "Discovered Devices": "Discovered Devices",
+  "Saved Devices": "Saved Devices",
+  "Connected": "Connected",
+  "Connecting...": "Connecting...",
+  "Device not found. Please scan again.": "Device not found. Please scan again."
 }

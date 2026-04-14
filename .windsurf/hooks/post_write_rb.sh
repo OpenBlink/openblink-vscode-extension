@@ -14,6 +14,18 @@ if [[ "$file_path" != *.rb ]]; then
   exit 0
 fi
 
+# Reject paths with dangerous characters (newlines, control chars) or '..' path segments
+if [[ "$file_path" =~ [[:cntrl:]] ]]; then
+  exit 0
+fi
+# Check for '..' path components (but allow filenames that contain '..' as a substring)
+IFS='/' read -ra segments <<< "$file_path"
+for seg in "${segments[@]}"; do
+  if [[ "$seg" == ".." ]]; then
+    exit 0
+  fi
+done
+
 # Determine workspace root (directory containing .windsurf/)
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 workspace_root="$(cd "$script_dir/../.." && pwd)"

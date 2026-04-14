@@ -69,7 +69,7 @@ src/
 ├── protocol.ts         # OpenBlink BLE protocol (D/P/L/R), input validation, CRC16
 ├── board-manager.ts    # Board configurations with runtime JSON validation
 ├── ui-manager.ts       # Output Channel, Status Bar, Diagnostics, TreeView providers
-│                       #   (Tasks, DeviceInfo, Metrics, Devices, BoardReference)
+│                       #   (Tasks, DeviceInfo, Metrics, Devices, BoardReference, McpStatus)
 ├── mcp-bridge.ts       # File-based IPC between extension and MCP server
 ├── mcp-server.ts       # Standalone stdio MCP server (5 tools for AI agents)
 └── types.ts            # Shared type definitions, BLE constants, SavedDevice
@@ -108,6 +108,59 @@ See [Build System](build-system.md) for details.
 - Use `Buffer.readUInt16LE()` / `Buffer.readUInt8()` for binary parsing instead of manual bit-shifting
 - Sanitize file paths against path traversal when constructing from user input
 - Run `npm audit` regularly and review [SECURITY.md](../SECURITY.md) for known dependency issues
+
+## Windsurf Cascade Hook
+
+The repository ships with a Cascade Hook (`.windsurf/hooks.json`) that auto-triggers Build & Blink whenever Cascade edits a `.rb` file. This provides a seamless AI-assisted development workflow:
+
+1. Open the project in Windsurf
+2. Connect to an OpenBlink device
+3. Ask Cascade to edit your `.rb` source file
+4. The hook automatically compiles and transfers the updated code to the device
+
+The hook uses the `post_write_code` event. When Cascade writes to a `.rb` file, the script `.windsurf/hooks/post_write_rb.sh` creates a trigger file in `.openblink/`, which the extension's `FileSystemWatcher` picks up to run Build & Blink.
+
+No additional configuration is needed — the hook is included in the repository and activates automatically in Windsurf.
+
+See [Architecture — MCP Integration](architecture.md#data-flow-mcp-integration) for details on the file-based IPC mechanism.
+
+## Releasing
+
+Releases are automated via GitHub Actions. Pushing a version tag triggers the workflow.
+
+### Prerequisites
+
+- `VSCE_PAT` — Azure DevOps Personal Access Token with **Marketplace > Manage** scope, stored in GitHub Secrets
+- `OVSX_PAT` — Open VSX access token, stored in GitHub Secrets
+
+### Steps
+
+1. Update `version` in `package.json`
+2. Update `CHANGELOG.md` with the new version's changes
+3. Commit and push to `main`
+4. Tag and push:
+
+```bash
+git tag v<VERSION>
+git push origin v<VERSION>
+```
+
+The CI pipeline (`.github/workflows/release.yml`) will automatically:
+- Build mrbc WASM from source
+- Run lint and tests
+- Package the VSIX
+- Publish to **VS Code Marketplace**
+- Publish to **Open VSX**
+- Create a **GitHub Release** with the VSIX attached
+
+### Manual Release (if needed)
+
+```bash
+npm run compile
+npx @vscode/vsce package
+npx @vscode/vsce publish --packagePath *.vsix
+npx ovsx publish *.vsix -p <OVSX_PAT>
+```
 
 ## Adding a New Board
 

@@ -6,6 +6,7 @@
   "No device is currently connected": "目前沒有已連接的裝置",
   "Device disconnected: {0}": "裝置已中斷連接: {0}",
   "Reconnecting ({0}/{1})...": "正在重新連接 ({0}/{1})...",
+  "Reconnecting...": "正在重新連接...",
   "Max reconnection attempts reached": "已達到最大重連次數",
   "Reconnected successfully": "重新連接成功",
   "Starting device search...": "正在搜尋裝置...",
@@ -56,5 +57,16 @@
   "Last Request": "最近請求",
   "Last Result": "最近結果",
   "Success": "成功",
-  "Failed": "失敗"
+  "Failed": "失敗",
+  "Invalid device ID": "無效的裝置ID",
+  "Scanning to find saved device...": "正在搜尋已儲存的裝置...",
+  "Searching...": "搜尋中...",
+  "No devices found": "找不到裝置",
+  "No saved devices": "沒有已儲存的裝置",
+  "Scanning...": "掃描中...",
+  "Discovered Devices": "發現的裝置",
+  "Saved Devices": "已儲存的裝置",
+  "Connected": "已連接",
+  "Connecting...": "連接中...",
+  "Device not found. Please scan again.": "找不到裝置。請重新掃描。"
 }

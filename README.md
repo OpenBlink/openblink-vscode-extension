@@ -1,7 +1,7 @@
 # OpenBlink VSCode Extension
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
-[![CI](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/ci.yml)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/OpenBlink/openblink-vscode-extension)
+[![CI](https://img.shields.io/github/actions/workflow/status/OpenBlink/openblink-vscode-extension/ci.yml?label=CI)](https://github.com/OpenBlink/openblink-vscode-extension/actions/workflows/ci.yml)
 
 **Edit Ruby, save, and your device changes instantly** — wireless embedded development in < 0.1 seconds, with no restart required.
 
@@ -66,7 +66,7 @@ The currently active `.rb` file in the editor is always the one that gets compil
 - [Board Configuration](doc/board-configuration.md) — How to add new board definitions
 - [MCP Integration](doc/mcp-integration.md) — AI agent setup for Windsurf, VS Code Copilot, Cursor, and Cline
 - [Internationalization](doc/i18n.md) — Multi-language support guide
-- [Contributing](doc/contributing.md) — Development environment setup
+- [Contributing](doc/contributing.md) — Development setup, code guidelines, and release process
 - [Security](SECURITY.md) — Security policy and dependency audit
 
 ## License

@@ -10,9 +10,6 @@ node_modules/**
 .gitmodules
 .github/**
 doc/**
-*.map
-*.ts
-!out/**
 tsconfig.json
 webpack.config.js
 eslint.config.*
@@ -21,3 +18,9 @@ mruby_build_config.rb
 mruby_build_config.rb.lock
 package-lock.json
 .DS_Store
+.gitignore
+app.rb
+SECURITY.md
+out/test/**
+**/*.map
+**/*.ts

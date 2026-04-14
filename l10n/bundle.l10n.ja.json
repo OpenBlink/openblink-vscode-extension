@@ -6,6 +6,7 @@
   "No device is currently connected": "いま、つながっているデバイスはありません",
   "Device disconnected: {0}": "デバイスがはなれました: {0}",
   "Reconnecting ({0}/{1})...": "さいせつぞくしています ({0}/{1})...",
+  "Reconnecting...": "さいせつぞくしています...",
   "Max reconnection attempts reached": "さいせつぞくのかいすうがじょうげんになりました",
   "Reconnected successfully": "さいせつぞくできました",
   "Starting device search...": "デバイスをさがしています...",
@@ -56,5 +57,16 @@
   "Last Request": "さいごのリクエスト",
   "Last Result": "さいごのけっか",
   "Success": "せいこう",
-  "Failed": "しっぱい"
+  "Failed": "しっぱい",
+  "Invalid device ID": "デバイスIDがただしくありません",
+  "Scanning to find saved device...": "ほぞんしたデバイスをさがしています...",
+  "Searching...": "さがしています...",
+  "No devices found": "デバイスがみつかりません",
+  "No saved devices": "ほぞんしたデバイスはありません",
+  "Scanning...": "スキャンちゅう...",
+  "Discovered Devices": "みつかったデバイス",
+  "Saved Devices": "ほぞんしたデバイス",
+  "Connected": "せつぞくずみ",
+  "Connecting...": "せつぞくちゅう...",
+  "Device not found. Please scan again.": "デバイスがみつかりません。もういちどスキャンしてください。"
 }

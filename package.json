@@ -12,10 +12,30 @@
     "url": "https://github.com/OpenBlink/openblink-vscode-extension"
   },
   "publisher": "OpenBlink",
+  "icon": "resources/icons/openblink.png",
   "categories": [
-    "Other"
+    "Other",
+    "Programming Languages"
   ],
+  "keywords": [
+    "mruby",
+    "ble",
+    "bluetooth",
+    "microcontroller",
+    "iot"
+  ],
+  "homepage": "https://github.com/OpenBlink/openblink-vscode-extension",
+  "bugs": {
+    "url": "https://github.com/OpenBlink/openblink-vscode-extension/issues"
+  },
   "l10n": "./l10n",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "This extension compiles and transfers code to hardware devices over BLE. It requires a trusted workspace."
+    },
+    "virtualWorkspaces": false
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -201,7 +221,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "webpack --mode production",
     "watch": "webpack --mode development --watch",
-    "pretest": "npm run compile && npm run lint",
+    "compile-tests": "tsc -p .",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
     "package": "vsce package"
@@ -218,6 +239,7 @@
     "@vscode/vsce": "^3.2.2",
     "copy-webpack-plugin": "^14.0.0",
     "eslint": "^10.2.0",
+    "ovsx": "^0.10.11",
     "ts-loader": "^9.5.2",
     "typescript": "^6.0.2",
     "webpack": "^5.98.0",

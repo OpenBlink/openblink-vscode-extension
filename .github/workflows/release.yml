@@ -8,31 +8,87 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 5.0.5
+
+      - name: Verify Emscripten
+        run: emcc --version
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      - name: Verify version consistency
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Version: $TAG_VERSION"
+
+      - name: Build mrbc WASM
+        run: make mrbc
+
+      - name: Verify mrbc WASM output
+        run: |
+          ls -la resources/wasm/mrbc.js
+          ls -la resources/wasm/mrbc.wasm
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run compile
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: xvfb-run -a npm test
 
       - name: Package VSIX
         run: npx @vscode/vsce package
 
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Publish to VS Code Marketplace
+        id: vsce
+        continue-on-error: true
+        run: npx @vscode/vsce publish --packagePath *.vsix
+        env:
+          VSCE_PAT: ${{ secrets.AZURE_PAT }}
+
+      - name: Publish to Open VSX
+        id: ovsx
+        continue-on-error: true
+        run: npx ovsx publish *.vsix
+        env:
+          OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
+
+      - name: Verify publish results
+        if: steps.vsce.outcome == 'failure' || steps.ovsx.outcome == 'failure'
+        run: |
+          echo "::error::One or more publish steps failed"
+          [ "${{ steps.vsce.outcome }}" = "failure" ] && echo "::error::VS Code Marketplace publish failed"
+          [ "${{ steps.ovsx.outcome }}" = "failure" ] && echo "::error::Open VSX publish failed"
+          exit 1
 
       - name: Create GitHub Release
+        if: steps.vsce.outcome == 'success' && steps.ovsx.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           files: '*.vsix'

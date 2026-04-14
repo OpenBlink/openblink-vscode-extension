@@ -212,23 +212,40 @@ export interface SavedDevice {
  * discovery timeouts, and safety limits ({@link MIN_USABLE_MTU}).
  */
 export const BLE_CONSTANTS = {
+  /** @brief UUID of the OpenBlink GATT service (hyphen-stripped). */
   OPENBLINK_SERVICE_UUID: '227da52ce13a412bbefbba2256bb7fbe',
+  /** @brief UUID of the Program characteristic for firmware upload (hyphen-stripped). */
   OPENBLINK_PROGRAM_CHARACTERISTIC_UUID: 'ad9fdd5611354a84923cce5a244385e7',
+  /** @brief UUID of the Console characteristic for device output notifications (hyphen-stripped). */
   OPENBLINK_CONSOLE_CHARACTERISTIC_UUID: 'a015b3de185a4252aa047a87d38ce148',
+  /** @brief UUID of the Negotiated MTU characteristic for reading the device's MTU (hyphen-stripped). */
   OPENBLINK_MTU_CHARACTERISTIC_UUID: 'ca1411513113448bb21a6a6203d253ff',
 
+  /** @brief Default MTU used when negotiation fails or is unavailable (bytes). */
   DEFAULT_MTU: 20,
+  /** @brief MTU value requested during GATT-level negotiation (bytes). */
   REQUESTED_MTU: 512,
+  /** @brief Size of the header prepended to each Data ('D') packet (bytes). */
   DATA_HEADER_SIZE: 6,
+  /** @brief Size of the Program ('P') header packet (bytes). */
   PROGRAM_HEADER_SIZE: 8,
+  /** @brief Maximum number of automatic reconnection attempts before giving up. */
   MAX_RECONNECT_ATTEMPTS: 5,
+  /** @brief Initial delay before the first reconnection attempt (ms); doubles on each retry. */
   INITIAL_RECONNECT_DELAY: 1000,
+  /** @brief Timeout for a single BLE characteristic write operation (ms). */
   WRITE_TIMEOUT: 10000,
+  /** @brief Duration of a BLE scan before automatic stop (ms). */
   SCAN_TIMEOUT: 10000,
+  /** @brief Timeout for the GATT connectAsync() call (ms). */
   CONNECTION_TIMEOUT: 10000,
+  /** @brief Timeout for GATT characteristic discovery after service discovery (ms). */
   CHARACTERISTIC_DISCOVERY_TIMEOUT: 5000,
+  /** @brief Timeout for the Bluetooth adapter to reach "poweredOn" state (ms). */
   BLUETOOTH_INIT_TIMEOUT: 15000,
+  /** @brief Extra time added to SCAN_TIMEOUT when waiting for a saved device to appear (ms). */
   SCAN_GRACE_PERIOD: 2000,
+  /** @brief Polling interval when waiting for a saved device during scan (ms). */
   DISCOVERY_POLL_INTERVAL: 200,
   /** @brief Minimum usable MTU (DATA_HEADER_SIZE + 1) to guarantee at least 1 byte of payload. */
   MIN_USABLE_MTU: 7,
