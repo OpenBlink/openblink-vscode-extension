@@ -261,9 +261,8 @@ server.registerTool('get_console_output', {
     }
 
     let logLines = raw.split('\n').filter(l => l.length > 0);
-    if (maxLines !== undefined && maxLines > 0) {
-      logLines = logLines.slice(-maxLines);
-    }
+    const cap = (maxLines !== undefined && maxLines > 0) ? maxLines : 100;
+    logLines = logLines.slice(-cap);
 
     return { content: [{ type: 'text' as const, text: logLines.join('\n') }] };
   },
