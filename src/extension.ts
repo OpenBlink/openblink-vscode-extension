@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
   const statusBar = ui.createStatusBar();
   context.subscriptions.push(outputChannel, diagnosticCollection, statusBar);
 
-  const extensionVersion = vscode.extensions.getExtension('OpenBlink.openblink-vscode-extension')?.packageJSON?.version ?? 'unknown';
+  const extensionVersion = vscode.extensions.getExtension('OpenBlink.openblink-extension')?.packageJSON?.version ?? 'unknown';
   ui.log(`[SYSTEM] OpenBlink VSCode Extension v${extensionVersion} started.`);
 
   // Initialize settings
