@@ -9,6 +9,9 @@ on:
       - 'vendor/mruby/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-mrbc-wasm:
     runs-on: ubuntu-latest
