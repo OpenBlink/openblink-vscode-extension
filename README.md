@@ -43,7 +43,7 @@ OpenBlink VSCode Extension brings [OpenBlink](https://github.com/OpenBlink/openb
 ## Installation
 
 1. Open the Extensions view in VS Code / Windsurf (`Ctrl+Shift+X`)
-2. Search for **OpenBlink VSCode Extension**
+2. Search for **OpenBlink**
 3. Click **Install**
 
 Requires VS Code 1.96.0 or later.

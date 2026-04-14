@@ -1,5 +1,5 @@
 {
-  "displayName": "OpenBlink VSCode Extension",
+  "displayName": "OpenBlink",
   "description": "BLEをつかって、マイコンにプログラムをおくれます — IDEからBuild & Blink",
   "command.connectDevice": "デバイスにつなぐ",
   "command.disconnectDevice": "デバイスからはなれる",

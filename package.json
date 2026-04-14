@@ -1,5 +1,5 @@
 {
-  "name": "openblink-vscode-extension",
+  "name": "openblink-extension",
   "displayName": "%displayName%",
   "description": "%description%",
   "version": "0.3.0",

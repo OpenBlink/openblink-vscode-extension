@@ -1,5 +1,5 @@
 {
-  "displayName": "OpenBlink VSCode Extension",
+  "displayName": "OpenBlink",
   "description": "BLE-based microcontroller development with mruby — Build & Blink from your IDE",
   "command.connectDevice": "Connect Device",
   "command.disconnectDevice": "Disconnect Device",
