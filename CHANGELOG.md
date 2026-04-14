@@ -5,6 +5,20 @@ All notable changes to the OpenBlink VSCode Extension will be documented in this
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-04-15
+
+### Changed
+- **Platform-specific VSIX builds** — Release pipeline now produces separate VSIX files per platform (`darwin-arm64`, `darwin-x64`, `win32-x64`, `linux-x64`) following [VS Code official guidance](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platformspecific-extensions), ensuring correct native BLE bindings are included for each OS
+- **3-job release pipeline** — Restructured `release.yml` into `build-wasm` → `build` (matrix ×4) → `publish` stages
+- **GitHub Release** — All platform-specific VSIX files are attached to each release
+
+### Fixed
+- Skip native binding verification on Linux (noble uses pure JS HCI socket, no `binding.node`)
+- Open VSX publish loop now attempts all platforms even if one fails
+- Pin `npx` tool versions (`@vscode/vsce@3`, `ovsx@0`) for reproducible CI builds
+- Add top-level `permissions: contents: read` to release workflow (least privilege)
+- Include `debug` and `ms` in VSIX (runtime dependencies of `@abandonware/noble`)
+
 ## [0.3.0] - 2026-04-13
 
 ### Added
@@ -56,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial release with basic Build & Blink functionality over BLE
 
+[0.3.2]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.1...v0.3.2
 [0.3.0]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/OpenBlink/openblink-vscode-extension/releases/tag/v0.1.5

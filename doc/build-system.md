@@ -90,6 +90,73 @@ Upgraded from Emscripten 4.0.23. Key changes:
 - **5.0.3**: `FS.write` only accepts TypedArray
 - **5.0.5**: C++ exceptions always thrown as CppException objects
 
+## Platform-Specific VSIX Packaging
+
+The extension uses **platform-specific VSIX builds** to include the correct native BLE bindings for each OS. This follows the [VS Code official guidance](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platformspecific-extensions) (supported since VS Code 1.61.0).
+
+### Why Platform-Specific?
+
+`@abandonware/noble` compiles a native `.node` binding via `node-gyp` during `npm ci`. The binding is OS-specific:
+
+| Platform | Native Binding | Loaded by |
+|----------|---------------|-----------|
+| macOS (arm64 / x64) | CoreBluetooth (`binding.node`) | `node-gyp-build` → `build/Release/binding.node` |
+| Windows (x64) | WinRT (`binding.node`) | `node-gyp-build` → `build/Release/binding.node` |
+| Linux (x64) | None (pure JS HCI socket) | `@abandonware/bluetooth-hci-socket` via BlueZ/D-Bus |
+
+Since `build/Release/` can only hold one platform's binary, a universal VSIX is not possible.
+
+### Release Pipeline (3-Job)
+
+```mermaid
+graph LR
+    A["build-wasm<br/>(ubuntu)"] --> B1["build<br/>(macOS-latest)"]
+    A --> B2["build<br/>(macOS-13)"]
+    A --> B3["build<br/>(windows)"]
+    A --> B4["build<br/>(ubuntu)"]
+    B1 --> C["publish"]
+    B2 --> C
+    B3 --> C
+    B4 --> C
+```
+
+| Job | Runner | Output |
+|-----|--------|--------|
+| `build-wasm` | ubuntu-latest | `mrbc.js` + `mrbc.wasm` |
+| `build` (×4) | matrix per OS | Platform-specific `.vsix` file |
+| `publish` | ubuntu-latest | Publish all VSIXs to Marketplace, Open VSX, GitHub Release |
+
+Each `build` job runs `npm ci` on its native OS, which compiles the correct `binding.node`. Then `vsce package --target <platform>` produces a VSIX containing only that platform's binary.
+
+### User Experience
+
+End users do not need to be aware of the platform-specific packaging. VS Code Marketplace and Open VSX automatically serve the correct VSIX for the user's platform. The install experience is identical to any other extension.
+
+For manual `.vsix` installation from GitHub Releases, users should select the file matching their platform (e.g., `openblink-darwin-arm64-x.y.z.vsix`).
+
+### Local Packaging
+
+```bash
+# Package for the current platform
+npx @vscode/vsce package --target darwin-arm64   # macOS Apple Silicon
+npx @vscode/vsce package --target darwin-x64     # macOS Intel
+npx @vscode/vsce package --target win32-x64      # Windows
+npx @vscode/vsce package --target linux-x64      # Linux
+```
+
+### Runtime Dependencies in VSIX
+
+Noble's runtime dependencies are explicitly unignored in `.vscodeignore`:
+
+| Dependency | Purpose | Needed at runtime? |
+|------------|---------|-------------------|
+| `@abandonware/noble` | BLE library + `build/Release/binding.node` | ✅ Yes |
+| `node-gyp-build` | Locates and loads `.node` binary | ✅ Yes |
+| `debug` | Logging in noble's JS code | ✅ Yes |
+| `ms` | Dependency of `debug` | ✅ Yes |
+| `node-addon-api` | C++ headers for `node-gyp` compilation | ❌ Build-time only |
+| `napi-thread-safe-callback` | C++ headers for `node-gyp` compilation | ❌ Build-time only |
+
 ## Clean and Rebuild
 
 ```bash
