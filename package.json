@@ -11,7 +11,7 @@
     "type": "git",
     "url": "https://github.com/OpenBlink/openblink-vscode-extension"
   },
-  "publisher": "OpenBlink",
+  "publisher": "OpenBlink-org",
   "icon": "resources/icons/openblink.png",
   "categories": [
     "Other",
@@ -24,7 +24,7 @@
     "microcontroller",
     "iot"
   ],
-  "homepage": "https://github.com/OpenBlink/openblink-vscode-extension",
+  "homepage": "https://openblink.org/",
   "bugs": {
     "url": "https://github.com/OpenBlink/openblink-vscode-extension/issues"
   },
