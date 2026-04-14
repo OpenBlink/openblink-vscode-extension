@@ -6,6 +6,7 @@
   "No device is currently connected": "目前沒有已連接的裝置",
   "Device disconnected: {0}": "裝置已中斷連接: {0}",
   "Reconnecting ({0}/{1})...": "正在重新連接 ({0}/{1})...",
+  "Reconnecting...": "正在重新連接...",
   "Max reconnection attempts reached": "已達到最大重連次數",
   "Reconnected successfully": "重新連接成功",
   "Starting device search...": "正在搜尋裝置...",

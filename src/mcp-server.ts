@@ -391,14 +391,17 @@ server.registerTool('get_board_reference', {
 
 // Guard against unhandled errors crashing the MCP server process silently.
 // These handlers log to stderr (visible in the MCP client's error stream)
-// and keep the process alive so the MCP client can report the failure.
+// and then exit, since the process may be in a corrupt state after an
+// uncaught exception (per Node.js docs).
 process.on('uncaughtException', (error) => {
   const detail = error instanceof Error && error.stack ? error.stack : String(error);
   process.stderr.write(`OpenBlink MCP server uncaught exception: ${detail}\n`);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   const detail = reason instanceof Error && reason.stack ? reason.stack : String(reason);
   process.stderr.write(`OpenBlink MCP server unhandled rejection: ${detail}\n`);
+  process.exit(1);
 });
 
 async function main(): Promise<void> {

@@ -6,6 +6,7 @@
   "No device is currently connected": "いま、つながっているデバイスはありません",
   "Device disconnected: {0}": "デバイスがはなれました: {0}",
   "Reconnecting ({0}/{1})...": "さいせつぞくしています ({0}/{1})...",
+  "Reconnecting...": "さいせつぞくしています...",
   "Max reconnection attempts reached": "さいせつぞくのかいすうがじょうげんになりました",
   "Reconnected successfully": "さいせつぞくできました",
   "Starting device search...": "デバイスをさがしています...",
