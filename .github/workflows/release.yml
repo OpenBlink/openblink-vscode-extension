@@ -6,83 +6,8 @@ on:
       - 'v*'
 
 jobs:
-  build-native-bindings:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Python (Windows only)
-        if: matrix.os == 'windows-latest'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
-      - name: Install VS Build Tools (Windows only)
-        if: matrix.os == 'windows-latest'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build native bindings (non-Linux)
-        if: matrix.os != 'ubuntu-latest'
-        run: npx node-gyp rebuild -C node_modules/@abandonware/noble
-
-      - name: Package native bindings
-        shell: bash
-        run: |
-          mkdir -p noble-native
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            # Linux uses HCI socket (pure JS), no native bindings needed
-            echo "Linux uses pure JS HCI socket, no native bindings"
-            echo "SKIP_UPLOAD=1" >> $GITHUB_ENV
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # macOS uses native binding at lib/mac/native/binding.node
-            mkdir -p noble-native/lib/mac/native
-            cp node_modules/@abandonware/noble/lib/mac/native/binding.node noble-native/lib/mac/native/
-            if [ ! -f noble-native/lib/mac/native/binding.node ]; then
-              echo "ERROR: macOS native binding not found"
-              exit 1
-            fi
-            echo "macOS native bindings:"
-            ls -la noble-native/lib/mac/native/
-          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows uses native binding at lib/win/native/binding.node
-            mkdir -p noble-native/lib/win/native
-            cp node_modules/@abandonware/noble/lib/win/native/binding.node noble-native/lib/win/native/
-            if [ ! -f noble-native/lib/win/native/binding.node ]; then
-              echo "ERROR: Windows native binding not found"
-              exit 1
-            fi
-            echo "Windows native bindings:"
-            ls -la noble-native/lib/win/native/
-          fi
-
-      - name: Upload native bindings artifact
-        if: env.SKIP_UPLOAD != '1'
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-${{ matrix.os }}
-          path: noble-native/
-
-  release:
-    needs: build-native-bindings
+  build-wasm:
     runs-on: ubuntu-latest
-    environment: production
-    permissions:
-      contents: write
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,12 +26,47 @@ jobs:
         with:
           ruby-version: '3.3'
 
+      - name: Build mrbc WASM
+        run: make mrbc
+
+      - name: Verify mrbc WASM output
+        run: |
+          ls -la resources/wasm/mrbc.js
+          ls -la resources/wasm/mrbc.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: resources/wasm/
+
+  build:
+    needs: build-wasm
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+          - os: windows-latest
+            target: win32-x64
+          - os: ubuntu-latest
+            target: linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Verify version consistency
+        shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           PKG_VERSION=$(node -p "require('./package.json').version")
@@ -116,72 +76,81 @@ jobs:
           fi
           echo "Version: $TAG_VERSION"
 
-      - name: Build mrbc WASM
-        run: make mrbc
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Verify mrbc WASM output
+      - name: Verify native binding (macOS)
+        if: startsWith(matrix.target, 'darwin-')
         run: |
-          ls -la resources/wasm/mrbc.js
-          ls -la resources/wasm/mrbc.wasm
+          echo "Noble native binding:"
+          ls -la node_modules/@abandonware/noble/build/Release/binding.node
 
-      - name: Download all native bindings
+      - name: Verify native binding (Windows)
+        if: startsWith(matrix.target, 'win32-')
+        shell: bash
+        run: |
+          echo "Noble native binding:"
+          ls -la node_modules/@abandonware/noble/build/Release/binding.node
+
+      - name: Download WASM artifact
         uses: actions/download-artifact@v4
         with:
-          path: native-artifacts
-
-      - name: Merge native bindings into node_modules
-        run: |
-          mkdir -p node_modules/@abandonware/noble/lib
-          
-          # Merge macOS bindings
-          if [ -d "native-artifacts/native-macos-latest" ]; then
-            cp -r native-artifacts/native-macos-latest/* node_modules/@abandonware/noble/
-            echo "macOS bindings merged"
-          else
-            echo "WARNING: macOS artifact not found"
-          fi
-          
-          # Merge Windows bindings
-          if [ -d "native-artifacts/native-windows-latest" ]; then
-            cp -r native-artifacts/native-windows-latest/* node_modules/@abandonware/noble/
-            echo "Windows bindings merged"
-          else
-            echo "WARNING: Windows artifact not found"
-          fi
-          
-          # Verify merged bindings
-          echo "Merged native bindings:"
-          find node_modules/@abandonware/noble/lib -name "*.node" 2>/dev/null || echo "No .node files found"
-          
-          # Verify at least one binding exists
-          if ! find node_modules/@abandonware/noble/lib -name "*.node" 2>/dev/null | grep -q .; then
-            echo "ERROR: No native bindings found after merge"
-            exit 1
-          fi
+          name: wasm
+          path: resources/wasm/
 
       - name: Lint
+        if: matrix.target == 'linux-x64'
         run: npm run lint
 
       - name: Test
+        if: matrix.target == 'linux-x64'
         run: xvfb-run -a npm test
 
-      - name: Compile
-        run: npm run compile
-
       - name: Package VSIX
-        run: npx @vscode/vsce package
+        run: npx @vscode/vsce package --target ${{ matrix.target }}
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: "*.vsix"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+
+    steps:
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download all VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+
+      - name: List VSIX files
+        run: ls -la *.vsix
 
       - name: Publish to VS Code Marketplace
         id: vsce
         continue-on-error: true
-        run: npx @vscode/vsce publish --packagePath *.vsix
+        run: npx @vscode/vsce publish --packagePath $(find . -iname '*.vsix')
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
 
       - name: Publish to Open VSX
         id: ovsx
         continue-on-error: true
-        run: npx ovsx publish *.vsix
+        run: |
+          for vsix in *.vsix; do
+            npx ovsx publish "$vsix"
+          done
         env:
           OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
 
