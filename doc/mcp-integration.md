@@ -7,15 +7,35 @@ OpenBlink devices programmatically.
 ## Overview
 
 The extension ships a built-in MCP server (`out/mcp-server.js`) that exposes
-five tools to any MCP-compatible AI agent:
+13 powerful tools to any MCP-compatible AI agent:
+
+### Device Connection Tools
+
+| Tool | Description |
+|------|-------------|
+| `scan_devices` | Scan for nearby BLE devices and return discovered devices |
+| `connect_device` | Connect to a BLE device by its ID |
+| `disconnect_device` | Disconnect from the current device |
+| `get_device_info` | Get BLE connection state, device name, ID, and MTU |
+
+### Development Tools
 
 | Tool | Description |
 |------|-------------|
 | `build_and_blink` | Compile a `.rb` file and transfer the bytecode via BLE |
-| `get_device_info` | Get BLE connection state, device name, ID, and MTU |
+| `validate_ruby_code` | Validate Ruby syntax without building (lightweight check) |
+| `soft_reset` | Execute soft reset on the connected device |
 | `get_console_output` | Get recent device console output (up to 100 lines) |
-| `get_metrics` | Get compile/transfer time and program size statistics |
 | `get_board_reference` | Get the selected board's API reference (Markdown) |
+
+### Debugging & Monitoring Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_build_diagnostics` | Get detailed build error information with suggestions |
+| `get_build_status` | Check if a build is in progress and view build history |
+| `cancel_build` | Cancel a pending or in-progress build |
+| `get_metrics` | Get compile/transfer time and program size statistics |
 
 ## Supported IDEs
 
@@ -118,11 +138,23 @@ JSON files in the `.openblink/` directory at the workspace root:
 
 ```
 .openblink/
-  status.json    ← Extension writes (debounced 1s): connection, metrics, board
+  status.json            ← Extension writes (debounced 1s): connection, metrics, board, lastBuild
+  build-status.json      ← Extension writes: isBuilding, queueLength, lastBuild details
+  build-diagnostics.json ← Extension writes: detailed error info, line numbers, suggestions
   openblink-console.log  ← Extension writes (debounced 2s): last 100 device log lines
-  trigger.json   → MCP server writes: build request
-  result.json    ← Extension writes: build outcome
+  scanned-devices.json   ← Extension writes: discovered BLE devices during scan
+  trigger.json           → MCP server writes: build request (with requestId, timestamp, type)
+  command.json           → MCP server writes: device commands (scan, connect, disconnect, reset, validate, cancel)
+  result.json            ← Extension writes: build outcome (with error codes)
+  command-result.json    ← Extension writes: command outcomes (devices list, connection info)
 ```
+
+### IPC Flow
+
+1. **Build Flow**: MCP writes `trigger.json` → Extension detects → Compiles → Writes `result.json`
+2. **Command Flow**: MCP writes `command.json` → Extension detects → Executes → Writes `command-result.json`
+3. **Status Flow**: Extension detects changes → Debounced write to `status.json`
+4. **Diagnostics**: Extension writes detailed build info to `build-diagnostics.json` on failure
 
 ### Performance
 
@@ -131,7 +163,51 @@ JSON files in the `.openblink/` directory at the workspace root:
 - `openblink-console.log` is written with a 2-second debounce, regardless of how
   frequently the device produces output
 - The MCP server only reads files when a tool is invoked (no polling)
+- Build status and diagnostics are written immediately for real-time feedback
 - When MCP is disabled, zero disk I/O occurs
 
 See [Architecture](architecture.md) for the full system diagram including the
 MCP data flow.
+
+## Error Handling
+
+The MCP server provides structured error responses with:
+
+- **Error Codes**: Numeric codes categorized by type (1xxx=general, 2xxx=file, 3xxx=build, 4xxx=BLE, 5xxx=board)
+- **Severity Levels**: `info`, `warning`, `error`, `critical`
+- **Recovery Suggestions**: Actionable guidance for each error type
+
+Example error response:
+```
+[Error 3001] WARNING: Syntax validation failed
+Details: Line 5, Col 12: [error] unexpected 'end'
+Recovery: Review the error details and fix the syntax issues.
+```
+
+## Recommended Workflows
+
+### Device Connection Workflow
+```
+1. scan_devices → Get list of nearby devices
+2. connect_device (with deviceId) → Connect to target device
+3. get_device_info → Verify connection and check MTU
+```
+
+### Development Workflow
+```
+1. get_board_reference → Read API documentation
+2. validate_ruby_code → Quick syntax check (optional)
+3. (Edit your .rb file)
+4. build_and_blink → Compile and deploy
+5. get_console_output → Check device output
+6. soft_reset → Restart if needed
+```
+
+### Debugging Workflow
+```
+1. build_and_blink fails
+2. get_build_diagnostics → Get detailed error info
+3. Fix errors and retry
+4. get_build_status → Check if build is stuck
+5. cancel_build → Cancel if needed
+```

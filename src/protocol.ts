@@ -159,18 +159,29 @@ export async function sendFirmware(
  *
  * @param programCharacteristic  BLE characteristic for the program endpoint.
  * @param onProgress             Optional callback invoked with a completion message.
+ * @param slot                   Optional program slot (1 or 2) to reset.
  */
 export async function sendReset(
   programCharacteristic: NobleCharacteristic,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  slot?: number
 ): Promise<void> {
-  const buffer = new ArrayBuffer(2);
-  const view = new DataView(buffer);
-  view.setUint8(0, 0x01);                          // Protocol version
-  view.setUint8(1, 'R'.charCodeAt(0));             // Packet type: [R]eset
-
-  await writeCharacteristic(programCharacteristic, buffer);
-  onProgress?.('[TRANSFER] [R]eset Complete');
+  // If slot is specified, include it in the packet
+  if (slot !== undefined) {
+    const buffer = new ArrayBuffer(3);
+    const view = new DataView(buffer);
+    view.setUint8(0, 0x01);                          // Protocol version
+    view.setUint8(1, 'R'.charCodeAt(0));             // Packet type: [R]eset
+    view.setUint8(2, slot);                          // Slot number
+    await writeCharacteristic(programCharacteristic, buffer);
+  } else {
+    const buffer = new ArrayBuffer(2);
+    const view = new DataView(buffer);
+    view.setUint8(0, 0x01);                          // Protocol version
+    view.setUint8(1, 'R'.charCodeAt(0));             // Packet type: [R]eset
+    await writeCharacteristic(programCharacteristic, buffer);
+  }
+  onProgress?.(`[TRANSFER] [R]eset Complete${slot ? ` (Slot ${slot})` : ''}`);
 }
 
 /**

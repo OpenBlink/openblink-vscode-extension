@@ -30,6 +30,88 @@ import { ConnectionState, MetricsData, MetricsStats, getMcpStatusDebounce, getMc
 import { getConsoleLog, log } from './ui-manager';
 
 // ============================================================================
+// Command Types
+// ============================================================================
+
+/** @brief Supported command types for device operations */
+export type McpCommandType = 'scan' | 'connect' | 'disconnect' | 'reset' | 'cancel' | 'validate';
+
+/** @brief Shape of the `command.json` file for device operations */
+export interface McpCommand {
+  /** @brief Command type */
+  type: McpCommandType;
+  /** @brief Unique request identifier */
+  requestId: string;
+  /** @brief Target request ID for cancel commands */
+  targetRequestId?: string;
+  /** @brief Device ID for connect commands */
+  deviceId?: string;
+  /** @brief Timeout in milliseconds */
+  timeout?: number;
+  /** @brief Force flag for disconnect commands */
+  force?: boolean;
+  /** @brief Program slot for reset commands */
+  slot?: number;
+  /** @brief File path for validate commands */
+  file?: string;
+  /** @brief Source code for validate commands */
+  code?: string;
+  /** @brief ISO 8601 timestamp */
+  timestamp: string;
+}
+
+/** @brief Shape of the `command-result.json` file */
+export interface McpCommandResult {
+  /** @brief Unique request identifier matching the command */
+  requestId: string;
+  /** @brief Whether the command succeeded */
+  success: boolean;
+  /** @brief Discovered devices for scan commands */
+  devices?: Array<{ id: string; name: string; rssi?: number }>;
+  /** @brief Device name for connect commands */
+  deviceName?: string;
+  /** @brief Negotiated MTU for connect commands */
+  mtu?: number;
+  /** @brief Human-readable error message on failure */
+  error?: string;
+}
+
+/** @brief Shape of the `build-diagnostics.json` file */
+export interface McpBuildDiagnostics {
+  /** @brief ISO 8601 timestamp of the build */
+  timestamp: string;
+  /** @brief Source file path */
+  file: string;
+  /** @brief Whether the build succeeded */
+  success: boolean;
+  /** @brief Error details */
+  errors: Array<{
+    line: number;
+    column: number;
+    message: string;
+    severity: 'error' | 'warning';
+    code?: string;
+  }>;
+  /** @brief Suggested fixes */
+  suggestions?: string[];
+}
+
+/** @brief Shape of the `build-status.json` file */
+export interface McpBuildStatus {
+  /** @brief Whether a build is currently in progress */
+  isBuilding: boolean;
+  /** @brief Information about the last build */
+  lastBuild: {
+    requestId: string;
+    success: boolean;
+    timestamp: string;
+    file: string;
+  } | null;
+  /** @brief Number of pending builds in queue */
+  queueLength: number;
+}
+
+// ============================================================================
 // Directory & File Paths
 // ============================================================================
 
@@ -61,8 +143,14 @@ let enabled = true;
 /** @brief FileSystemWatcher for `trigger.json`. */
 let triggerWatcher: vscode.FileSystemWatcher | undefined;
 
+/** @brief FileSystemWatcher for `command.json`. */
+let commandWatcher: vscode.FileSystemWatcher | undefined;
+
 /** @brief Callback invoked when a build trigger is detected. */
 let onTriggerCallback: ((filePath: string, requestId: string) => Promise<void>) | undefined;
+
+/** @brief Callback invoked when a device command is detected. */
+let onCommandCallback: ((command: McpCommand) => Promise<void>) | undefined;
 
 // ============================================================================
 // Write Callbacks (for UI notification)
@@ -116,12 +204,15 @@ export function setEnabled(value: boolean): void {
   enabled = value;
 
   if (wasEnabled && !enabled) {
-    // Disable: dispose watcher
+    // Disable: dispose watchers
     triggerWatcher?.dispose();
     triggerWatcher = undefined;
+    commandWatcher?.dispose();
+    commandWatcher = undefined;
   } else if (!wasEnabled && enabled) {
-    // Enable: re-create watcher
+    // Enable: re-create watchers
     startTriggerWatcher();
+    startCommandWatcher();
   }
 }
 
@@ -369,6 +460,14 @@ export function onBuildTrigger(callback: (filePath: string, requestId: string) =
 }
 
 /**
+ * @brief Register the callback that is invoked when `command.json` is detected.
+ * @param callback  Async function receiving the parsed command object.
+ */
+export function onCommand(callback: (command: McpCommand) => Promise<void>): void {
+  onCommandCallback = callback;
+}
+
+/**
  * @brief Start watching for `trigger.json` in the `.openblink/` directory.
  *
  * Creates a {@link vscode.FileSystemWatcher} that fires when the MCP server
@@ -430,6 +529,162 @@ function startTriggerWatcher(): void {
   }
 }
 
+// ----------------------------------------------------------------------------
+// Command Watcher
+// ----------------------------------------------------------------------------
+
+/**
+ * @brief Start watching for `command.json` in the `.openblink/` directory.
+ *
+ * Creates a {@link vscode.FileSystemWatcher} that fires when the MCP server
+ * writes or updates the command file.  The watcher reads the command,
+ * deletes the file, and invokes the registered callback.
+ */
+function startCommandWatcher(): void {
+  if (commandWatcher) { return; }
+  const dir = ipcDir();
+  if (!dir) { return; }
+
+  ensureDir();
+  const pattern = new vscode.RelativePattern(dir, 'command.json');
+  commandWatcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, true);
+
+  const handleCommand = async () => {
+    const commandPath = path.join(dir, 'command.json');
+    try {
+      let raw: string;
+      try {
+        raw = fs.readFileSync(commandPath, 'utf-8');
+        fs.unlinkSync(commandPath);
+      } catch {
+        return; // File already consumed or does not exist
+      }
+      const command: McpCommand = JSON.parse(raw);
+      if (!command.requestId || typeof command.requestId !== 'string') { return; }
+      if (onCommandCallback) {
+        await onCommandCallback(command);
+      }
+    } catch {
+      // Ignore malformed command files
+    }
+  };
+
+  commandWatcher.onDidCreate(handleCommand);
+  commandWatcher.onDidChange(handleCommand);
+
+  // Process any command.json that was written before the watcher started
+  const existingCommand = path.join(dir, 'command.json');
+  if (fs.existsSync(existingCommand)) {
+    void handleCommand();
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Command Result File
+// ----------------------------------------------------------------------------
+
+/**
+ * @brief Write a command result file for the MCP server to consume.
+ * @param result  Command outcome.
+ */
+export function writeCommandResult(result: McpCommandResult): void {
+  if (!enabled) { return; }
+  const dir = ensureDir();
+  if (!dir) { return; }
+  try {
+    fs.writeFileSync(path.join(dir, 'command-result.json'), JSON.stringify(result, null, 2), 'utf-8');
+  } catch {
+    // Silently ignore write errors
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Build Diagnostics File
+// ----------------------------------------------------------------------------
+
+/**
+ * @brief Write build diagnostic information for the MCP server.
+ * @param diagnostics  Build diagnostic data.
+ */
+export function writeBuildDiagnostics(diagnostics: McpBuildDiagnostics): void {
+  if (!enabled) { return; }
+  const dir = ensureDir();
+  if (!dir) { return; }
+  try {
+    fs.writeFileSync(path.join(dir, 'build-diagnostics.json'), JSON.stringify(diagnostics, null, 2), 'utf-8');
+    log(`[MCP] Build diagnostics written: ${diagnostics.errors.length} issue(s)`);
+  } catch {
+    // Silently ignore write errors
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Build Status File
+// ----------------------------------------------------------------------------
+
+/** @brief Current build status */
+let currentBuildStatus: McpBuildStatus = {
+  isBuilding: false,
+  lastBuild: null,
+  queueLength: 0,
+};
+
+/**
+ * @brief Update the build status.
+ * @param status  Partial build status update.
+ */
+export function updateBuildStatus(status: Partial<McpBuildStatus>): void {
+  if (!enabled) { return; }
+  currentBuildStatus = { ...currentBuildStatus, ...status };
+  flushBuildStatus();
+}
+
+/**
+ * @brief Write the current build status to `build-status.json`.
+ */
+function flushBuildStatus(): void {
+  if (!enabled) { return; }
+  const dir = ensureDir();
+  if (!dir) { return; }
+  try {
+    fs.writeFileSync(path.join(dir, 'build-status.json'), JSON.stringify(currentBuildStatus, null, 2), 'utf-8');
+  } catch {
+    // Silently ignore write errors
+  }
+}
+
+/**
+ * @brief Mark build as started.
+ * @param requestId  Build request ID.
+ * @param file  Source file path.
+ */
+export function markBuildStarted(requestId: string, file: string): void {
+  updateBuildStatus({
+    isBuilding: true,
+    lastBuild: {
+      requestId,
+      success: false,
+      timestamp: new Date().toISOString(),
+      file,
+    },
+  });
+}
+
+/**
+ * @brief Mark build as completed.
+ * @param requestId  Build request ID.
+ * @param success  Whether the build succeeded.
+ */
+export function markBuildCompleted(requestId: string, success: boolean): void {
+  const lastBuild = currentBuildStatus.lastBuild;
+  updateBuildStatus({
+    isBuilding: false,
+    lastBuild: lastBuild && lastBuild.requestId === requestId
+      ? { ...lastBuild, success }
+      : lastBuild,
+  });
+}
+
 // ============================================================================
 // Lifecycle
 // ============================================================================
@@ -452,7 +707,9 @@ export function initialize(context: vscode.ExtensionContext): void {
 
   if (enabled) {
     startTriggerWatcher();
+    startCommandWatcher();
     scheduleStatusWrite();
+    flushBuildStatus();
     log('[MCP] Bridge initialized (IPC enabled).');
   } else {
     log('[MCP] Bridge initialized (IPC disabled).');
@@ -464,6 +721,8 @@ export function initialize(context: vscode.ExtensionContext): void {
       enabled = false;
       triggerWatcher?.dispose();
       triggerWatcher = undefined;
+      commandWatcher?.dispose();
+      commandWatcher = undefined;
       if (statusTimer) { clearTimeout(statusTimer); }
       if (consoleTimer) { clearTimeout(consoleTimer); }
     },
