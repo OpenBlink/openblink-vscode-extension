@@ -111,10 +111,6 @@ jobs:
         if: matrix.target == 'linux-x64'
         run: xvfb-run -a npm test
 
-      - name: Clean build output
-        shell: bash
-        run: rm -rf out
-
       - name: Remove unnecessary bluetooth-hci-socket (non-Linux)
         if: runner.os != 'Linux'
         shell: bash

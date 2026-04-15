@@ -218,7 +218,8 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run clean && npm run compile",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "compile": "webpack --mode production",
     "watch": "webpack --mode development --watch",
     "compile-tests": "tsc -p .",
