@@ -152,7 +152,7 @@ Noble's runtime dependencies are explicitly unignored in `.vscodeignore`:
 
 | Dependency | Included paths | Purpose |
 |------------|---------------|---------|
-| `@abandonware/noble` | `package.json`, `index.js`, `lib/**/*.js`, `lib/**/*.json`, `build/Release/binding.node` | BLE library + native addon |
+| `@abandonware/noble` | `package.json`, `index.js`, `with-custom-binding.js`, `lib/**/*.js`, `lib/**/*.json`, `build/Release/binding.node` | BLE library + native addon |
 | `node-gyp-build` | `**` | Locates and loads `.node` binary at runtime |
 | `debug` | `**` | Logging in noble's JS code |
 | `ms` | `**` | Dependency of `debug` |
