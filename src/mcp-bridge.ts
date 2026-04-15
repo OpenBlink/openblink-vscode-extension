@@ -419,6 +419,8 @@ export interface McpBuildResult {
   programSize?: number;
   /** @brief Human-readable error message (present on failure). */
   error?: string;
+  /** @brief True when compilation succeeded but no device was connected for transfer. */
+  compiledWithoutTransfer?: boolean;
 }
 
 /**

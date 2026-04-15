@@ -142,10 +142,9 @@ JSON files in the `.openblink/` directory at the workspace root:
   build-status.json      ← Extension writes: isBuilding, queueLength, lastBuild details
   build-diagnostics.json ← Extension writes: detailed error info, line numbers, suggestions
   openblink-console.log  ← Extension writes (debounced 2s): last 100 device log lines
-  scanned-devices.json   ← Extension writes: discovered BLE devices during scan
   trigger.json           → MCP server writes: build request (with requestId, timestamp, type)
   command.json           → MCP server writes: device commands (scan, connect, disconnect, reset, validate, cancel)
-  result.json            ← Extension writes: build outcome (with error codes)
+  result.json            ← Extension writes: build outcome (compileTime, transferTime, programSize, compiledWithoutTransfer)
   command-result.json    ← Extension writes: command outcomes (devices list, connection info)
 ```
 

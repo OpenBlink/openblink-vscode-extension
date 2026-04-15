@@ -152,10 +152,15 @@ export async function sendFirmware(
 }
 
 /**
- * @brief Send a soft-reset command to the connected device.
+ * @brief Send a reset command to the connected device.
  *
- * Writes a 2-byte packet (version=0x01, type='R') to the program
- * characteristic, causing the device to perform a software reset.
+ * Without a slot parameter, writes a standard 2-byte packet
+ * (version=0x01, type='R') triggering a full microcontroller reboot.
+ * When a slot is specified, writes a 3-byte packet (version=0x01,
+ * type='R', slot) to reset a specific program slot.
+ *
+ * **Note:** The Reset command causes a full reboot — the BLE
+ * connection will be dropped and the device will re-advertise.
  *
  * @param programCharacteristic  BLE characteristic for the program endpoint.
  * @param onProgress             Optional callback invoked with a completion message.

@@ -222,7 +222,8 @@ const metricsHistory: MetricsHistory = {
  */
 function addToHistory(arr: number[], value: number): void {
   arr.push(value);
-  while (arr.length > getMaxMetricsHistory()) { arr.shift(); }
+  const max = Math.max(1, getMaxMetricsHistory());
+  while (arr.length > max) { arr.shift(); }
 }
 
 /**

@@ -206,13 +206,15 @@ export function activate(context: vscode.ExtensionContext) {
       const lastTransfer = history.transfer.length > 0 ? history.transfer[history.transfer.length - 1] : undefined;
       const lastSize = history.size.length > 0 ? history.size[history.size.length - 1] : undefined;
 
+      const compiledWithoutTransfer = !buildResult.success && buildResult.error?.includes('not connected') && lastCompile !== undefined;
       mcpBridge.writeBuildResult({
         requestId,
         success: buildResult.success,
-        compileTime: buildResult.success ? lastCompile : undefined,
+        compileTime: compiledWithoutTransfer ? lastCompile : (buildResult.success ? lastCompile : undefined),
         transferTime: buildResult.success ? lastTransfer : undefined,
-        programSize: buildResult.success ? lastSize : undefined,
+        programSize: compiledWithoutTransfer ? lastSize : (buildResult.success ? lastSize : undefined),
         error: buildResult.error,
+        compiledWithoutTransfer: compiledWithoutTransfer || undefined,
       });
       mcpStatusProvider.update({
         lastResultTime: new Date(),
@@ -635,7 +637,7 @@ async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode
   }
   isBuilding = true;
   try {
-    return await buildAndBlinkInner(context, sourceUri);
+    return await buildAndBlinkInner(context, sourceUri, options);
   } finally {
     isBuilding = false;
   }
@@ -754,7 +756,7 @@ async function buildAndBlinkInner(
       suggestions: ['Connect to a device using connect_device to transfer the bytecode'],
     });
 
-    return { success: true, error: 'Compiled successfully but device is not connected' };
+    return { success: false, error: 'Compiled successfully but device is not connected' };
   }
 
   const transferStart = performance.now();
@@ -829,13 +831,25 @@ async function handleMcpScanCommand(command: { requestId: string; timeout?: numb
   ui.log(`[MCP] Scanning for devices (${command.requestId})`);
 
   try {
-    // Start scan
+    // Start scan (BleManager also sets its own auto-stop timer)
     await bleManager.startScan();
 
-    // Wait for scan timeout
-    await new Promise(resolve => setTimeout(resolve, command.timeout ?? 10000));
+    // Wait until BleManager's auto-stop fires or the requested timeout elapses,
+    // whichever comes first — avoids the dual-timer issue where the MCP timeout
+    // and BleManager's internal scan timeout could conflict.
+    const scanTimeout = command.timeout ?? 10000;
+    await new Promise<void>(resolve => {
+      const deadline = setTimeout(() => { clearInterval(poll); resolve(); }, scanTimeout);
+      const poll = setInterval(() => {
+        if (!bleManager.isScanning) {
+          clearInterval(poll);
+          clearTimeout(deadline);
+          resolve();
+        }
+      }, 200);
+    });
 
-    // Stop scan
+    // Ensure scan is fully stopped
     await bleManager.stopScan();
 
     // Collect discovered devices
@@ -900,7 +914,7 @@ async function handleMcpConnectCommand(command: { requestId: string; deviceId?: 
 /**
  * @brief Handle MCP disconnect command.
  */
-async function handleMcpDisconnectCommand(command: { requestId: string; force?: boolean }): Promise<void> {
+async function handleMcpDisconnectCommand(command: { requestId: string }): Promise<void> {
   ui.log(`[MCP] Disconnecting device (${command.requestId})`);
 
   try {
@@ -988,6 +1002,19 @@ async function handleMcpValidateCommand(command: { requestId: string; file?: str
       const ws = vscode.workspace.workspaceFolders?.[0];
       const sourceFile = command.file ?? currentSourceFile;
       const filePath = ws ? path.join(ws.uri.fsPath, sourceFile) : sourceFile;
+
+      // Guard against path traversal (SEC-02): resolved path must be inside workspace
+      if (ws) {
+        const resolvedFile = path.resolve(filePath);
+        const resolvedWsRoot = path.resolve(ws.uri.fsPath);
+        const rel = path.relative(resolvedWsRoot, resolvedFile);
+        if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+          throw new Error('Invalid file path: path traversal detected');
+        }
+      }
+      if (!sourceFile.endsWith('.rb')) {
+        throw new Error('Only .rb files are supported');
+      }
 
       const fileUri = vscode.Uri.file(filePath);
       const fileContent = await vscode.workspace.fs.readFile(fileUri);

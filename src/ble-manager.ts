@@ -332,7 +332,7 @@ export class BleManager {
       this.programCharacteristic = null;
       this.consoleCharacteristic = null;
       this.negotiatedMtuCharacteristic = null;
-      this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+      this._negotiatedMTU = getBleDefaultMtu();
       this.setConnectionState('disconnected');
       throw error;
     } finally {
@@ -573,7 +573,7 @@ export class BleManager {
       this.consoleCharacteristic = null;
       this.negotiatedMtuCharacteristic = null;
       this.currentDevice = null;
-      this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+      this._negotiatedMTU = getBleDefaultMtu();
       this.reconnectAttempts = 0;
       this.setConnectionState('disconnected');
     }

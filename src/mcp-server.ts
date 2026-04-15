@@ -633,7 +633,7 @@ server.registerTool('validate_ruby_code', {
   inputSchema: {
     file: z.string().min(1).optional().describe(
       'Path to the .rb source file relative to the workspace root. ' +
-      'If omitted, the configured openblink.sourceFile setting is used.'
+      'Either file or code must be provided.'
     ),
     code: z.string().optional().describe(
       'Ruby source code to validate directly. If provided, this takes precedence over the file parameter.'
@@ -977,9 +977,10 @@ server.registerTool('disconnect_device', {
 
 server.registerTool('soft_reset', {
   description:
-    'Execute a soft reset on the connected OpenBlink device. ' +
-    'This restarts the mruby/c program on the device without disconnecting BLE. ' +
-    'Use this after build_and_blink to restart the program, or to recover from errors.',
+    'Execute a reset on the connected OpenBlink device. ' +
+    'This triggers a full microcontroller reboot — the BLE connection will be dropped and the device will re-advertise. ' +
+    'Use this to recover from errors or when a clean hardware-level restart is required. ' +
+    'Note: After reset, you will need to reconnect using connect_device.',
   inputSchema: {
     slot: z.number().int().min(1).max(2).optional().describe(
       'Program slot to reset (1 or 2). If omitted, uses the currently configured slot.'
@@ -1124,7 +1125,14 @@ server.registerTool('get_build_status', {
     openWorldHint: false,
   },
 }, async () => {
-    const dir = getIpcDir();
+    let dir: string;
+    try {
+      dir = getIpcDir();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
+    }
+
     const status = readJsonFile<{
       isBuilding: boolean;
       lastBuild: {

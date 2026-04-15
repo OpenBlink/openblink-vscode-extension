@@ -63,6 +63,7 @@ Unlike the Load command, a Reset tears down everything: the BLE connection is dr
 |--------|------|-------|-------------|
 | 0 | 1 | version | `0x01` |
 | 1 | 1 | command | `'R'` (0x52) |
+| 2 | 1 | slot | *(optional)* Program slot (1 or 2) to reset. If omitted (2-byte packet), the device performs a full reboot. |
 
 ## CRC16
 
