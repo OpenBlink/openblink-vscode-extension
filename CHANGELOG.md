@@ -5,6 +5,16 @@ All notable changes to the OpenBlink VSCode Extension will be documented in this
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] - 2026-04-15
+
+### Fixed
+- Include `bluetooth-hci-socket` native binding in Linux VSIX for HCI socket BLE support
+- Include noble's `with-custom-binding.js` in VSIX for correct native binding resolution
+
+### Changed
+- Improve CI workflows and VSIX packaging reliability
+- Quote `$GITHUB_STEP_SUMMARY` in release workflow to avoid word-splitting
+
 ## [0.3.2] - 2026-04-15
 
 ### Changed
@@ -70,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial release with basic Build & Blink functionality over BLE
 
+[0.3.3]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.1...v0.3.2
 [0.3.0]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.1.5...v0.2.0
