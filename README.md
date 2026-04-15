@@ -9,7 +9,7 @@ OpenBlink VSCode Extension brings [OpenBlink](https://github.com/OpenBlink/openb
 
 ## What is OpenBlink?
 
-[OpenBlink](https://github.com/OpenBlink/openblink) is an open-source project that enables **"Thinking Speed Prototyping"** for embedded systems. 
+[OpenBlink](https://github.com/OpenBlink/openblink) is an open-source project that enables **"Thinking Speed Prototyping"** for embedded systems.
 
 **Key ideas:**
 
@@ -28,11 +28,11 @@ Microcontroller-powered embedded devices are truly **ubiquitous** — woven into
 
 OpenBlink challenges this status quo. On an OpenBlink-enabled device, **end users themselves can rewrite part of the firmware** — safely and wirelessly — unlocking a future where everyday embedded devices become programmable. Our goal is to realize this vision of a truly _programmable world_.
 
-And the rewrite is fast: it takes no longer than the blink of an eye.
+And the rewrite is fast: it takes no longer than the blink of an eye — that is where the name "Blink" comes from.
 
 ### Thinking Speed Prototyping
 
-The name "Blink" means _"in the blink of an eye."_ When you edit Ruby code and save, the running device reflects the change in under 0.1 seconds. The microcontroller does **not** restart: only the target task is reloaded while everything else — including the BLE connection and debug console — keeps running.
+When you edit Ruby code and save, the running device reflects the change in under 0.1 seconds. The microcontroller does **not** restart: only the target task is reloaded while everything else — including the BLE connection and debug console — keeps running. This tight feedback loop lets you iterate at the speed of thought.
 
 ### Layered Task Architecture
 
@@ -69,7 +69,7 @@ OpenBlink places great importance on the **joy of hacking on real hardware**. Ev
 - **No restart** — The microcontroller stays running, which means your wireless debug console session is never interrupted
 - **Fully wireless** — Develop on a wearable while you are wearing it, or on a sensor mounted in a hard-to-reach spot — no cables to tether you
 
-These qualities come together to create a **happy hacking experience** for everyone who Build & Blinks.
+These qualities come together to create a **happy hacking experience** for everyone who builds and blinks.
 
 ## Features
 
