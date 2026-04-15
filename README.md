@@ -60,6 +60,17 @@ Permission-level API restrictions ensure that openness and stability coexist: de
 
 A single ecosystem covers **learning → hobby → production**. The same toolchain, language, and workflow apply whether you are blinking an LED for the first time or shipping a product.
 
+### Happy Hacking
+
+OpenBlink places great importance on the **joy of hacking on real hardware**. Every design decision serves this goal:
+
+- **No fatal mistakes** — A buggy Ruby program cannot brick the device; the C-level firmware and BLE stack keep running, so you can always send a fix. This safety net encourages you to experiment boldly and keep trying — OpenBlink is built for people who learn by doing
+- **Instant feedback** — Changes take effect in under 0.1 seconds, keeping you in a tight edit-test loop without breaking your flow
+- **No restart** — The microcontroller stays running, which means your wireless debug console session is never interrupted
+- **Fully wireless** — Develop on a wearable while you are wearing it, or on a sensor mounted in a hard-to-reach spot — no cables to tether you
+
+These qualities come together to create a **happy hacking experience** for everyone who Build & Blinks.
+
 ## Features
 
 - **Build & Blink** — Save any `.rb` file to instantly compile and transfer via BLE to your device
