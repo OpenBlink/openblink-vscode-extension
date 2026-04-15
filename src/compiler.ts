@@ -10,8 +10,14 @@ import { CompileResult, CreateMrbcFactory, EmscriptenModule } from './types';
 
 declare const __non_webpack_require__: typeof require | undefined;
 
-/** @brief Cached Emscripten module instance. Initialized once by {@link initCompiler}. */
+/** @brief Cached Emscripten module instance. Initialized lazily on first compile. */
 let mrbcModule: EmscriptenModule | null = null;
+
+/** @brief Promise that resolves when the compiler is initialized. */
+let compilerInitPromise: Promise<void> | null = null;
+
+/** @brief Extension URI for lazy initialization. */
+let extensionUri: vscode.Uri | null = null;
 
 /** @brief Dynamic callback for capturing mrbc stdout during compilation. */
 let activePrintCallback: ((text: string) => void) | null = null;
@@ -19,35 +25,76 @@ let activePrintCallback: ((text: string) => void) | null = null;
 let activePrintErrCallback: ((text: string) => void) | null = null;
 
 /**
- * @brief Initialize the mruby bytecode compiler.
+ * @brief Set the extension URI for later lazy initialization.
+ * 
+ * This should be called once during extension activation to enable
+ * lazy loading of the WASM compiler.
+ * 
+ * @param uri  Base URI of the installed extension.
+ */
+export function setExtensionUri(uri: vscode.Uri): void {
+  extensionUri = uri;
+}
+
+/**
+ * @brief Initialize the mruby bytecode compiler lazily.
  *
  * Loads the `mrbc.js` and `mrbc.wasm` files from the extension's output
  * directory, instantiates the Emscripten module, and caches it for
- * subsequent calls to {@link compile}.
+ * subsequent calls to {@link compile}. Only initializes once.
  *
+ * @returns Promise that resolves when initialization is complete.
+ */
+async function ensureCompilerInitialized(): Promise<void> {
+  if (mrbcModule) {
+    return; // Already initialized
+  }
+  
+  if (compilerInitPromise) {
+    return compilerInitPromise; // Initialization in progress
+  }
+  
+  if (!extensionUri) {
+    throw new Error('Extension URI not set. Call setExtensionUri() first.');
+  }
+
+  compilerInitPromise = (async () => {
+    const mrbcJsPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.js').fsPath;
+    const mrbcWasmPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.wasm').fsPath;
+
+    const wasmBinary = fs.readFileSync(mrbcWasmPath);
+    // Use __non_webpack_require__ to bypass webpack's static analysis for dynamic WASM module loading
+    const dynamicRequire = typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require;
+    const createMrbc: CreateMrbcFactory = dynamicRequire(mrbcJsPath);
+
+    mrbcModule = await createMrbc({
+      wasmBinary: wasmBinary.buffer.slice(
+        wasmBinary.byteOffset,
+        wasmBinary.byteOffset + wasmBinary.byteLength
+      ),
+      print: (text: string) => {
+        if (activePrintCallback) { activePrintCallback(text); }
+      },
+      printErr: (text: string) => {
+        if (activePrintErrCallback) { activePrintErrCallback(text); }
+      },
+    });
+  })();
+
+  return compilerInitPromise;
+}
+
+/**
+ * @brief Initialize the mruby bytecode compiler (legacy synchronous version).
+ *
+ * @deprecated This function is kept for backward compatibility but no longer
+ *             initializes the compiler. The compiler is now lazily loaded.
  * @param extensionUri  Base URI of the installed extension.
  */
-export async function initCompiler(extensionUri: vscode.Uri): Promise<void> {
-  const mrbcJsPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.js').fsPath;
-  const mrbcWasmPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.wasm').fsPath;
-
-  const wasmBinary = fs.readFileSync(mrbcWasmPath);
-  // Use __non_webpack_require__ to bypass webpack's static analysis for dynamic WASM module loading
-  const dynamicRequire = typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require;
-  const createMrbc: CreateMrbcFactory = dynamicRequire(mrbcJsPath);
-
-  mrbcModule = await createMrbc({
-    wasmBinary: wasmBinary.buffer.slice(
-      wasmBinary.byteOffset,
-      wasmBinary.byteOffset + wasmBinary.byteLength
-    ),
-    print: (text: string) => {
-      if (activePrintCallback) { activePrintCallback(text); }
-    },
-    printErr: (text: string) => {
-      if (activePrintErrCallback) { activePrintErrCallback(text); }
-    },
-  });
+export async function initCompiler(_extensionUri: vscode.Uri): Promise<void> {
+  // Store the URI for lazy initialization
+  setExtensionUri(_extensionUri);
+  // Compiler will be initialized on first compile
 }
 
 /**
@@ -56,17 +103,31 @@ export async function initCompiler(extensionUri: vscode.Uri): Promise<void> {
  * Writes the source to the Emscripten virtual filesystem, invokes `mrbc`
  * via `_main`, reads back the resulting `.mrb` file, and returns a
  * {@link CompileResult}. Temporary files are cleaned up in a `finally` block.
+ * The compiler is lazily initialized on first use.
  *
  * @param rubyCode  Ruby source code string.
  * @param onOutput  Optional callback for compiler stdout.
  * @param onError   Optional callback for compiler stderr.
  * @returns Compilation result including bytecode on success.
  */
-export function compile(
+export async function compile(
   rubyCode: string,
   onOutput?: (text: string) => void,
   onError?: (text: string) => void
-): CompileResult {
+): Promise<CompileResult> {
+  // Ensure compiler is initialized before proceeding
+  try {
+    await ensureCompilerInitialized();
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      error: `Failed to initialize compiler: ${msg}`,
+      compileTime: 0,
+      size: 0,
+    };
+  }
+
   if (!mrbcModule) {
     return {
       success: false,
