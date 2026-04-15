@@ -111,7 +111,7 @@ Since `build/Release/` can only hold one platform's binary, a universal VSIX is 
 ```mermaid
 graph LR
     A["build-wasm<br/>(ubuntu)"] --> B1["build<br/>(macOS-latest)"]
-    A --> B2["build<br/>(macOS-13)"]
+    A --> B2["build<br/>(macOS-15 + Rosetta 2)"]
     A --> B3["build<br/>(windows)"]
     A --> B4["build<br/>(ubuntu)"]
     B1 --> C["publish"]
@@ -127,6 +127,8 @@ graph LR
 | `publish` | ubuntu-latest | Publish all VSIXs to Marketplace, Open VSX, GitHub Release |
 
 Each `build` job runs `npm ci` on its native OS, which compiles the correct `binding.node`. Then `vsce package --target <platform>` produces a VSIX containing only that platform's binary.
+
+The `darwin-x64` target runs on `macos-15` (arm64) with `actions/setup-node` configured to install x64 Node.js. Rosetta 2 translates the x64 process, ensuring `node-gyp` compiles the correct x64 native binding.
 
 ### User Experience
 
@@ -148,14 +150,16 @@ npx @vscode/vsce package --target linux-x64      # Linux
 
 Noble's runtime dependencies are explicitly unignored in `.vscodeignore`:
 
-| Dependency | Purpose | Needed at runtime? |
-|------------|---------|-------------------|
-| `@abandonware/noble` | BLE library + `build/Release/binding.node` | ✅ Yes |
-| `node-gyp-build` | Locates and loads `.node` binary | ✅ Yes |
-| `debug` | Logging in noble's JS code | ✅ Yes |
-| `ms` | Dependency of `debug` | ✅ Yes |
-| `node-addon-api` | C++ headers for `node-gyp` compilation | ❌ Build-time only |
-| `napi-thread-safe-callback` | C++ headers for `node-gyp` compilation | ❌ Build-time only |
+| Dependency | Included paths | Purpose |
+|------------|---------------|---------|
+| `@abandonware/noble` | `package.json`, `index.js`, `with-custom-binding.js`, `lib/**/*.js`, `lib/**/*.json`, `build/Release/binding.node` | BLE library + native addon |
+| `node-gyp-build` | `**` | Locates and loads `.node` binary at runtime |
+| `debug` | `**` | Logging in noble's JS code |
+| `ms` | `**` | Dependency of `debug` |
+
+Build-time only dependencies (`node-addon-api`, `napi-thread-safe-callback`) and noble's C++ source files (`*.cc`, `*.h`, `*.mm`, `*.gyp`) are excluded.
+
+> **Note**: `vsce` uses flat negate semantics — a `!` pattern always overrides all ignore patterns regardless of order. To exclude build artifacts, each negate pattern must target only the specific files needed at runtime (e.g., `!noble/lib/**/*.js`) rather than broad globs (e.g., `!noble/**`).
 
 ## Clean and Rebuild
 

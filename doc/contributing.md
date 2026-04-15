@@ -158,9 +158,9 @@ The CI pipeline (`.github/workflows/release.yml`) runs a 3-job workflow:
 3. **`publish`** — Downloads all VSIXs and publishes to:
    - **VS Code Marketplace** (`vsce publish --packagePath *.vsix`)
    - **Open VSX** (per-file loop)
-   - **GitHub Release** (all VSIX files attached)
+   - **GitHub Release** (all VSIX files attached, always created)
 
-Lint and tests run on the Linux matrix runner.
+Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Release is always created so VSIX files are available for manual download. Lint and tests run on the Linux matrix runner.
 
 ### User Experience
 

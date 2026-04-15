@@ -134,10 +134,13 @@ jobs:
       - name: List VSIX files
         run: ls -la *.vsix
 
+      - name: Install publish tools
+        run: npm install -g @vscode/vsce@3 ovsx@0
+
       - name: Publish to VS Code Marketplace
         id: vsce
         continue-on-error: true
-        run: npx @vscode/vsce@3 publish --packagePath *.vsix
+        run: vsce publish --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
 
@@ -147,25 +150,32 @@ jobs:
         run: |
           failed=0
           for vsix in *.vsix; do
-            npx ovsx@0 publish "$vsix" || failed=1
+            ovsx publish "$vsix" || failed=1
           done
           [ "$failed" -eq 0 ]
         env:
           OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
 
-      - name: Verify publish results
-        if: steps.vsce.outcome == 'failure' || steps.ovsx.outcome == 'failure'
-        run: |
-          echo "::error::One or more publish steps failed"
-          [ "${{ steps.vsce.outcome }}" = "failure" ] && echo "::error::VS Code Marketplace publish failed"
-          [ "${{ steps.ovsx.outcome }}" = "failure" ] && echo "::error::Open VSX publish failed"
-          exit 1
-
       - name: Create GitHub Release
-        if: steps.vsce.outcome == 'success' && steps.ovsx.outcome == 'success'
+        if: ${{ !cancelled() }}
         uses: softprops/action-gh-release@v2
         with:
           files: '*.vsix'
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish summary
+        if: ${{ !cancelled() }}
+        run: |
+          echo "## Publish Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Channel | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| VS Code Marketplace | ${{ steps.vsce.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Open VSX | ${{ steps.ovsx.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.vsce.outcome }}" = "failure" ]; then
+            echo "::warning::VS Code Marketplace publish failed"
+          fi
+          if [ "${{ steps.ovsx.outcome }}" = "failure" ]; then
+            echo "::warning::Open VSX publish failed"
+          fi
