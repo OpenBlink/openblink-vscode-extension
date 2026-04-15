@@ -18,6 +18,48 @@ OpenBlink VSCode Extension brings [OpenBlink](https://github.com/OpenBlink/openb
 - **Ruby for embedded** — Use [mruby/c](https://github.com/mrubyc/mrubyc), a lightweight Ruby VM, to develop for microcontrollers with high productivity and readability
 - **For everyone** — Not just for embedded engineers. Designed for system designers, mechanical engineers, hobbyists, students, and end users who want to customize their own devices ("DIY-able value")
 
+## Philosophy & Goals
+
+OpenBlink is driven by the belief that **embedded programming should be accessible to everyone** — not just specialized software engineers.
+
+### A Programmable World
+
+Microcontroller-powered embedded devices are truly **ubiquitous** — woven into every corner of the physical world, from home appliances and wearables to industrial equipment and vehicles — and they directly influence how the real world behaves. Yet the firmware that runs on these devices has traditionally been the exclusive domain of the manufacturer; end users have had no way to modify it.
+
+OpenBlink challenges this status quo. On an OpenBlink-enabled device, **end users themselves can rewrite part of the firmware** — safely and wirelessly — unlocking a future where everyday embedded devices become programmable. Our goal is to realize this vision of a truly _programmable world_.
+
+And the rewrite is fast: it takes no longer than the blink of an eye.
+
+### Thinking Speed Prototyping
+
+The name "Blink" means _"in the blink of an eye."_ When you edit Ruby code and save, the running device reflects the change in under 0.1 seconds. The microcontroller does **not** restart: only the target task is reloaded while everything else — including the BLE connection and debug console — keeps running.
+
+### Layered Task Architecture
+
+OpenBlink firmware separates embedded software into three layers:
+
+| Layer | Language | Wirelessly rewritable? |
+|-------|----------|------------------------|
+| **Critical tasks** (drivers, BLE stack, RTOS) | C | No |
+| **UX tasks** (device behavior, LED patterns) | Ruby | Yes |
+| **DIY tasks** (end-user programs) | Ruby | Yes |
+
+Only the Ruby layers execute on the [mruby/c](https://github.com/mrubyc/mrubyc) VM. The C layer remains untouched during a Blink, keeping the system stable and the wireless connection alive.
+
+### For Everyone
+
+OpenBlink is designed so that **system designers, mechanical engineers, hobbyists, students, and end users** — not only embedded software engineers — can modify real device behavior. Example use cases include:
+
+- Tuning sensor thresholds and control sequences on a real product
+- Writing factory inspection programs without embedding test logic in the production firmware
+- Letting end users customize device behavior ("DIY-able value")
+
+Permission-level API restrictions ensure that openness and stability coexist: devices expose only the methods appropriate for each trust level.
+
+### From Education to Production
+
+A single ecosystem covers **learning → hobby → production**. The same toolchain, language, and workflow apply whether you are blinking an LED for the first time or shipping a product.
+
 ## Features
 
 - **Build & Blink** — Save any `.rb` file to instantly compile and transfer via BLE to your device
