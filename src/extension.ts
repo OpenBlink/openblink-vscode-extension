@@ -335,8 +335,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize compiler
   initCompiler(context.extensionUri).then(() => {
     ui.log('[SYSTEM] mrbc WASM compiler initialized.');
-  }).catch((error: Error) => {
-    const msg = error.message ?? String(error);
+  }).catch((error: unknown) => {
+    const msg = error instanceof Error ? error.message : String(error);
     ui.log(`[SYSTEM] Compiler initialization failed: ${msg}`);
     vscode.window.showErrorMessage(l10n.t('Compiler initialization failed: {0}', msg));
   });
@@ -656,7 +656,7 @@ async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode
 async function buildAndBlinkInner(
   context: vscode.ExtensionContext,
   sourceUri: vscode.Uri,
-  options?: { requestId?: string }
+  _options?: { requestId?: string }
 ): Promise<{ success: boolean; error?: string; diagnostics?: string[] }> {
   const filePath = sourceUri.fsPath;
   const errors: Array<{ line: number; column: number; message: string; severity: 'error' | 'warning'; code?: string }> = [];

@@ -597,6 +597,10 @@ server.registerTool('get_board_reference', {
     if (!extensionDir) {
       return { content: [{ type: 'text' as const, text: `Extension directory is not configured. Cannot verify board reference path.` }], isError: true };
     }
+    // Reject relative paths to prevent path traversal (SEC-07)
+    if (!path.isAbsolute(extensionDir)) {
+      return { content: [{ type: 'text' as const, text: `OPENBLINK_EXTENSION_DIR must be an absolute path.` }], isError: true };
+    }
     const resolvedExtensionDir = path.resolve(extensionDir);
     const relativeRefPath = path.relative(resolvedExtensionDir, refPath);
     if (relativeRefPath === '..' || relativeRefPath.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRefPath)) {
@@ -672,8 +676,10 @@ server.registerTool('validate_ruby_code', {
     registerOperation(requestId);
 
     try {
-      // Write validation trigger
-      const trigger = {
+      // Write validation command (uses command.json, not trigger.json,
+      // so the extension routes it to the validate handler which supports
+      // both 'file' and 'code' parameters)
+      const command = {
         type: 'validate',
         requestId,
         file,
@@ -681,12 +687,12 @@ server.registerTool('validate_ruby_code', {
         timestamp: new Date().toISOString(),
       };
 
-      if (!writeJsonFile(path.join(dir, 'trigger.json'), trigger)) {
-        return formatErrorResponse(createError(ErrorCode.FILE_ACCESS_DENIED, 'Failed to write validation trigger'));
+      if (!writeJsonFile(path.join(dir, 'command.json'), command)) {
+        return formatErrorResponse(createError(ErrorCode.FILE_ACCESS_DENIED, 'Failed to write validation command'));
       }
 
-      // Poll for result
-      const resultPath = path.join(dir, 'result.json');
+      // Poll for command result
+      const resultPath = path.join(dir, 'command-result.json');
       const result = await pollForResult<{
         requestId: string;
         success: boolean;

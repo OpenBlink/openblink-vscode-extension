@@ -13,7 +13,6 @@ import {
   NobleService,
   NobleCharacteristic,
   BLE_CONSTANTS,
-  getBleWriteTimeout,
   getBleScanTimeout,
   getBleConnectionTimeout,
   getBleMaxReconnectAttempts,
