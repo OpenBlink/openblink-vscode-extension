@@ -5,7 +5,7 @@
 
 import { EventEmitter } from 'vscode';
 import * as l10n from '@vscode/l10n';
-import noble, { Peripheral, Characteristic } from '@abandonware/noble';
+import type { Peripheral, Characteristic } from '@abandonware/noble';
 import {
   ConnectionState,
   DeviceInfo,
@@ -17,14 +17,48 @@ import {
 
 /**
  * @brief Extended Noble module type with runtime state properties and async scan helpers.
+ *
+ * Declared as a standalone interface (rather than `typeof noble & { ... }`) to
+ * support lazy-loading of the native noble module.  Only the subset of the
+ * Noble API actually used by {@link BleManager} is listed here.
  */
-type NobleWithState = typeof noble & {
+interface NobleWithState {
   state: 'poweredOn' | 'poweredOff' | 'unknown';
   initialized: boolean;
   scanning: boolean;
   startScanningAsync: (serviceUUIDs?: string[], allowDuplicates?: boolean) => Promise<void>;
   stopScanningAsync: () => Promise<void>;
-};
+  on(event: 'stateChange', callback: (state: string) => void): void;
+  on(event: 'discover', callback: (peripheral: Peripheral) => void): void;
+  removeListener(event: 'stateChange', callback: (state: string) => void): void;
+  removeListener(event: 'discover', callback: (peripheral: Peripheral) => void): void;
+}
+
+/** @brief Lazily resolved Noble module instance. */
+let _noble: NobleWithState | undefined;
+
+/**
+ * @brief Lazy-load the @abandonware/noble native module.
+ *
+ * Defers loading of the heavy native BLE module until BLE operations are
+ * actually requested, avoiding its cost during extension activation.
+ *
+ * @returns The Noble module cast to {@link NobleWithState}.
+ */
+function getNoble(): NobleWithState {
+  if (!_noble) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      _noble = require('@abandonware/noble') as NobleWithState;
+    } catch (error) {
+      throw new Error(
+        l10n.t('Failed to load Bluetooth module. BLE support may not be available on this platform.'),
+        { cause: error },
+      );
+    }
+  }
+  return _noble;
+}
 
 /**
  * @brief Manages BLE connectivity to OpenBlink-compatible devices.
@@ -141,20 +175,20 @@ export class BleManager {
    * @throws Error if Bluetooth initialization times out or the adapter is off.
    */
   private async ensureAdapterReady(): Promise<void> {
-    const nobleInstance = noble as NobleWithState;
-    this.log(`[BLE] Noble state: ${nobleInstance.state}`);
+    const noble = getNoble();
+    this.log(`[BLE] Noble state: ${noble.state}`);
 
-    if (nobleInstance.state === 'poweredOn') { return; }
+    if (noble.state === 'poweredOn') { return; }
 
     this.log(`[BLE] Waiting for Bluetooth adapter initialization...`);
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         noble.removeListener('stateChange', stateHandler);
-        this.log(`[BLE] Bluetooth init timeout. Current state: ${nobleInstance.state}`);
+        this.log(`[BLE] Bluetooth init timeout. Current state: ${noble.state}`);
         this.log(`[BLE] Troubleshooting: Check Bluetooth is enabled in System Settings.`);
         this.log(`[BLE] On macOS: System Settings > Privacy & Security > Bluetooth`);
         this.log(`[BLE] On Linux: Ensure BlueZ is running (sudo systemctl status bluetooth)`);
-        reject(new Error(l10n.t('Bluetooth initialization timeout') + ` (state: ${nobleInstance.state})`));
+        reject(new Error(l10n.t('Bluetooth initialization timeout') + ` (state: ${noble.state})`));
       }, BLE_CONSTANTS.BLUETOOTH_INIT_TIMEOUT);
 
       const stateHandler = (state: string) => {
@@ -173,7 +207,7 @@ export class BleManager {
       noble.on('stateChange', stateHandler);
 
       // Check again in case state changed between our check and listener registration
-      if (nobleInstance.state === 'poweredOn') {
+      if (noble.state === 'poweredOn') {
         clearTimeout(timeout);
         noble.removeListener('stateChange', stateHandler);
         resolve();
@@ -195,7 +229,7 @@ export class BleManager {
 
     await this.ensureAdapterReady();
 
-    const nobleInstance = noble as NobleWithState;
+    const noble = getNoble();
 
     // Remove our own discover listener to prevent duplicates
     this.removeDiscoverListener();
@@ -216,9 +250,9 @@ export class BleManager {
         this._onDeviceDiscovered.fire(info);
       }
     };
-    nobleInstance.on('discover', this.discoverHandler);
+    noble.on('discover', this.discoverHandler);
 
-    await nobleInstance.startScanningAsync([BLE_CONSTANTS.OPENBLINK_SERVICE_UUID]);
+    await noble.startScanningAsync([BLE_CONSTANTS.OPENBLINK_SERVICE_UUID]);
 
     this.scanTimer = setTimeout(() => {
       this.stopScan();
@@ -236,9 +270,9 @@ export class BleManager {
       this.scanTimer = null;
     }
 
-    const nobleInstance = noble as NobleWithState;
+    const noble = getNoble();
     try {
-      await nobleInstance.stopScanningAsync();
+      await noble.stopScanningAsync();
     } catch {
       // Scan may already be stopped
     }
@@ -554,7 +588,7 @@ export class BleManager {
    */
   private removeDiscoverListener(): void {
     if (this.discoverHandler) {
-      noble.removeListener('discover', this.discoverHandler);
+      getNoble().removeListener('discover', this.discoverHandler);
       this.discoverHandler = null;
     }
   }
