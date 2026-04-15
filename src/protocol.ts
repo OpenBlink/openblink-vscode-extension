@@ -3,7 +3,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 OpenBlink All Rights Reserved.
  */
 
-import { BLE_CONSTANTS, NobleCharacteristic } from './types';
+import { BLE_CONSTANTS, NobleCharacteristic, getBleWriteTimeout } from './types';
 
 /**
  * @brief Compute a reflected CRC-16 checksum.
@@ -39,13 +39,13 @@ export function crc16_reflect(poly: number, seed: number, data: Uint8Array): num
  *
  * @param characteristic  Target BLE characteristic.
  * @param buffer          Data to write.
- * @param timeout         Maximum time to wait in milliseconds (default: {@link BLE_CONSTANTS.WRITE_TIMEOUT}).
+ * @param timeout         Maximum time to wait in milliseconds (default: configured write timeout).
  * @throws Error if the write does not complete within the timeout.
  */
 async function writeCharacteristic(
   characteristic: NobleCharacteristic,
   buffer: ArrayBuffer,
-  timeout: number = BLE_CONSTANTS.WRITE_TIMEOUT
+  timeout: number = getBleWriteTimeout()
 ): Promise<void> {
   const nodeBuffer = Buffer.from(buffer);
 
@@ -152,25 +152,41 @@ export async function sendFirmware(
 }
 
 /**
- * @brief Send a soft-reset command to the connected device.
+ * @brief Send a reset command to the connected device.
  *
- * Writes a 2-byte packet (version=0x01, type='R') to the program
- * characteristic, causing the device to perform a software reset.
+ * Without a slot parameter, writes a standard 2-byte packet
+ * (version=0x01, type='R') triggering a full microcontroller reboot.
+ * When a slot is specified, writes a 3-byte packet (version=0x01,
+ * type='R', slot) to reset a specific program slot.
+ *
+ * **Note:** The Reset command causes a full reboot — the BLE
+ * connection will be dropped and the device will re-advertise.
  *
  * @param programCharacteristic  BLE characteristic for the program endpoint.
  * @param onProgress             Optional callback invoked with a completion message.
+ * @param slot                   Optional program slot (1 or 2) to reset.
  */
 export async function sendReset(
   programCharacteristic: NobleCharacteristic,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  slot?: number
 ): Promise<void> {
-  const buffer = new ArrayBuffer(2);
-  const view = new DataView(buffer);
-  view.setUint8(0, 0x01);                          // Protocol version
-  view.setUint8(1, 'R'.charCodeAt(0));             // Packet type: [R]eset
-
-  await writeCharacteristic(programCharacteristic, buffer);
-  onProgress?.('[TRANSFER] [R]eset Complete');
+  // If slot is specified, include it in the packet
+  if (slot !== undefined) {
+    const buffer = new ArrayBuffer(3);
+    const view = new DataView(buffer);
+    view.setUint8(0, 0x01);                          // Protocol version
+    view.setUint8(1, 'R'.charCodeAt(0));             // Packet type: [R]eset
+    view.setUint8(2, slot);                          // Slot number
+    await writeCharacteristic(programCharacteristic, buffer);
+  } else {
+    const buffer = new ArrayBuffer(2);
+    const view = new DataView(buffer);
+    view.setUint8(0, 0x01);                          // Protocol version
+    view.setUint8(1, 'R'.charCodeAt(0));             // Packet type: [R]eset
+    await writeCharacteristic(programCharacteristic, buffer);
+  }
+  onProgress?.(`[TRANSFER] [R]eset Complete${slot ? ` (Slot ${slot})` : ''}`);
 }
 
 /**

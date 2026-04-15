@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as l10n from '@vscode/l10n';
+import * as path from 'path';
 import { BleManager } from './ble-manager';
 import { initCompiler, compile, parseDiagnostics } from './compiler';
 import { sendFirmware, sendReset } from './protocol';
@@ -191,9 +192,13 @@ export function activate(context: vscode.ExtensionContext) {
   mcpBridge.onBuildTrigger(async (filePath: string, requestId: string) => {
     ui.log(`[MCP] Build trigger received: ${filePath} (${requestId})`);
     mcpStatusProvider.update({ lastTriggerTime: new Date(), lastTriggerRequestId: requestId });
+
+    // Mark build as started
+    mcpBridge.markBuildStarted(requestId, filePath);
+
     try {
       const sourceUri = vscode.Uri.file(filePath);
-      const buildResult = await buildAndBlink(context, sourceUri, { silent: true });
+      const buildResult = await buildAndBlink(context, sourceUri, { silent: true, requestId });
 
       // Write build result for MCP server to consume
       const history = ui.getMetricsHistory();
@@ -201,23 +206,57 @@ export function activate(context: vscode.ExtensionContext) {
       const lastTransfer = history.transfer.length > 0 ? history.transfer[history.transfer.length - 1] : undefined;
       const lastSize = history.size.length > 0 ? history.size[history.size.length - 1] : undefined;
 
+      const compiledWithoutTransfer = !buildResult.success && buildResult.error?.includes('not connected') && lastCompile !== undefined;
       mcpBridge.writeBuildResult({
         requestId,
         success: buildResult.success,
-        compileTime: buildResult.success ? lastCompile : undefined,
+        compileTime: compiledWithoutTransfer ? lastCompile : (buildResult.success ? lastCompile : undefined),
         transferTime: buildResult.success ? lastTransfer : undefined,
-        programSize: buildResult.success ? lastSize : undefined,
+        programSize: compiledWithoutTransfer ? lastSize : (buildResult.success ? lastSize : undefined),
         error: buildResult.error,
+        compiledWithoutTransfer: compiledWithoutTransfer || undefined,
       });
       mcpStatusProvider.update({
         lastResultTime: new Date(),
         lastResultSuccess: buildResult.success,
         lastResultError: buildResult.error,
       });
+
+      // Mark build as completed
+      mcpBridge.markBuildCompleted(requestId, buildResult.success);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       mcpBridge.writeBuildResult({ requestId, success: false, error: msg });
       mcpStatusProvider.update({ lastResultTime: new Date(), lastResultSuccess: false, lastResultError: msg });
+      mcpBridge.markBuildCompleted(requestId, false);
+    }
+  });
+
+  // Register MCP command callback — invoked when the MCP server writes a `command.json` file.
+  mcpBridge.onCommand(async (command) => {
+    ui.log(`[MCP] Command received: ${command.type} (${command.requestId})`);
+
+    switch (command.type) {
+      case 'scan':
+        await handleMcpScanCommand(command);
+        break;
+      case 'connect':
+        await handleMcpConnectCommand(command);
+        break;
+      case 'disconnect':
+        await handleMcpDisconnectCommand(command);
+        break;
+      case 'reset':
+        await handleMcpResetCommand(command);
+        break;
+      case 'cancel':
+        await handleMcpCancelCommand(command);
+        break;
+      case 'validate':
+        await handleMcpValidateCommand(command);
+        break;
+      default:
+        ui.log(`[MCP] Unknown command type: ${(command as { type: string }).type}`);
     }
   });
 
@@ -298,8 +337,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize compiler
   initCompiler(context.extensionUri).then(() => {
     ui.log('[SYSTEM] mrbc WASM compiler initialized.');
-  }).catch((error: Error) => {
-    const msg = error.message ?? String(error);
+  }).catch((error: unknown) => {
+    const msg = error instanceof Error ? error.message : String(error);
     ui.log(`[SYSTEM] Compiler initialization failed: ${msg}`);
     vscode.window.showErrorMessage(l10n.t('Compiler initialization failed: {0}', msg));
   });
@@ -585,8 +624,10 @@ export function activate(context: vscode.ExtensionContext) {
  * @param options    Optional settings.  When `silent` is true, the concurrency
  *                   skip does not show a user-facing warning (used for
  *                   auto-triggered builds from the save listener).
+ *                   When `requestId` is provided, build diagnostics are written
+ *                   for MCP integration.
  */
-async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri, options?: { silent?: boolean }): Promise<{ success: boolean; error?: string }> {
+async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri, options?: { silent?: boolean; requestId?: string }): Promise<{ success: boolean; error?: string; diagnostics?: string[] }> {
   if (isBuilding) {
     ui.log('[SYSTEM] Build already in progress, skipping.');
     if (!options?.silent) {
@@ -596,7 +637,7 @@ async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode
   }
   isBuilding = true;
   try {
-    return await buildAndBlinkInner(context, sourceUri);
+    return await buildAndBlinkInner(context, sourceUri, options);
   } finally {
     isBuilding = false;
   }
@@ -608,17 +649,36 @@ async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode
  * Reads the source file, compiles it with mrbc, and (if a device is
  * connected) sends the resulting bytecode to the selected program slot.
  * Updates diagnostics, metrics, and the status bar accordingly.
+ * Writes build diagnostics for MCP integration.
  *
  * @param context    Extension context (unused here but kept for API symmetry).
  * @param sourceUri  URI of the Ruby source file to compile.
+ * @param options    Optional settings including requestId for MCP tracking.
  */
-async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: vscode.Uri): Promise<{ success: boolean; error?: string }> {
+async function buildAndBlinkInner(
+  context: vscode.ExtensionContext,
+  sourceUri: vscode.Uri,
+  _options?: { requestId?: string }
+): Promise<{ success: boolean; error?: string; diagnostics?: string[] }> {
+  const filePath = sourceUri.fsPath;
+  const errors: Array<{ line: number; column: number; message: string; severity: 'error' | 'warning'; code?: string }> = [];
+
   try {
     await vscode.workspace.fs.stat(sourceUri);
   } catch {
-    const errorMsg = l10n.t('Source file not found: {0}', sourceUri.fsPath);
+    const errorMsg = l10n.t('Source file not found: {0}', filePath);
     vscode.window.showErrorMessage(errorMsg);
     mcpBridge.updateBuildResult(false, errorMsg);
+
+    // Write diagnostics for MCP
+    mcpBridge.writeBuildDiagnostics({
+      timestamp: new Date().toISOString(),
+      file: filePath,
+      success: false,
+      errors: [{ line: 0, column: 0, message: errorMsg, severity: 'error', code: 'FILE_NOT_FOUND' }],
+      suggestions: ['Ensure the file exists in the workspace', 'Check the file path configuration'],
+    });
+
     return { success: false, error: errorMsg };
   }
 
@@ -633,13 +693,39 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
 
   if (!result.success) {
     ui.log(`[COMPILE] error: ${result.error}`);
-    if (compileErrors.length > 0) {
-      const diagnostics = parseDiagnostics(compileErrors.join('\n'), sourceUri);
-      ui.setDiagnostics(sourceUri, diagnostics);
+
+    // Parse compile errors for diagnostics
+    const parsedDiagnostics = compileErrors.length > 0
+      ? parseDiagnostics(compileErrors.join('\n'), sourceUri)
+      : [];
+
+    if (parsedDiagnostics.length > 0) {
+      ui.setDiagnostics(sourceUri, parsedDiagnostics);
+      for (const d of parsedDiagnostics) {
+        errors.push({
+          line: d.range.start.line + 1,
+          column: d.range.start.character + 1,
+          message: d.message,
+          severity: d.severity === vscode.DiagnosticSeverity.Error ? 'error' : 'warning',
+        });
+      }
+    } else if (result.error) {
+      errors.push({ line: 0, column: 0, message: result.error, severity: 'error' });
     }
+
     vscode.window.showErrorMessage(l10n.t('Compilation failed'));
     mcpBridge.updateBuildResult(false, result.error ?? 'Compilation failed');
-    return { success: false, error: result.error ?? 'Compilation failed' };
+
+    // Write diagnostics for MCP
+    mcpBridge.writeBuildDiagnostics({
+      timestamp: new Date().toISOString(),
+      file: filePath,
+      success: false,
+      errors,
+      suggestions: ['Check Ruby syntax', 'Review the board API reference for available methods'],
+    });
+
+    return { success: false, error: result.error ?? 'Compilation failed', diagnostics: compileErrors };
   }
 
   ui.log(`[COMPILE] success: ${result.compileTime.toFixed(1)}ms, size: ${result.size} bytes`);
@@ -660,6 +746,16 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
       size: ui.calculateStats(history.size),
     });
     mcpBridge.updateBuildResult(false, 'Device is not connected');
+
+    // Write success diagnostics (compilation succeeded, transfer skipped)
+    mcpBridge.writeBuildDiagnostics({
+      timestamp: new Date().toISOString(),
+      file: filePath,
+      success: true,
+      errors: [],
+      suggestions: ['Connect to a device using connect_device to transfer the bytecode'],
+    });
+
     return { success: false, error: 'Compiled successfully but device is not connected' };
   }
 
@@ -684,6 +780,15 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
     });
     mcpBridge.updateBuildResult(true);
 
+    // Write success diagnostics
+    mcpBridge.writeBuildDiagnostics({
+      timestamp: new Date().toISOString(),
+      file: filePath,
+      success: true,
+      errors: [],
+      suggestions: ['Use get_console_output to check device output'],
+    });
+
     ui.log(`[COMPILE] ${l10n.t('Compilation successful: {0}ms, size: {1} bytes', result.compileTime.toFixed(1), String(result.size))}`);
     ui.log(`[TRANSFER] ${l10n.t('Transfer complete: {0}ms', transferTime.toFixed(1))}`);
     return { success: true };
@@ -692,6 +797,16 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
     ui.log(`[TRANSFER] Error: ${msg}`);
     vscode.window.showErrorMessage(msg);
     mcpBridge.updateBuildResult(false, msg);
+
+    // Write failure diagnostics
+    mcpBridge.writeBuildDiagnostics({
+      timestamp: new Date().toISOString(),
+      file: filePath,
+      success: false,
+      errors: [{ line: 0, column: 0, message: msg, severity: 'error', code: 'TRANSFER_FAILED' }],
+      suggestions: ['Check device connection', 'Try reconnecting to the device', 'Check MTU settings'],
+    });
+
     return { success: false, error: msg };
   }
 }
@@ -704,3 +819,235 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
  * performs a best-effort BLE disconnect to avoid connection leaks.
  */
 export function deactivate() {}
+
+// ============================================================================
+// MCP Command Handlers
+// ============================================================================
+
+/**
+ * @brief Handle MCP scan command.
+ */
+async function handleMcpScanCommand(command: { requestId: string; timeout?: number }): Promise<void> {
+  ui.log(`[MCP] Scanning for devices (${command.requestId})`);
+
+  try {
+    // Start scan (BleManager also sets its own auto-stop timer)
+    await bleManager.startScan();
+
+    // Wait until BleManager's auto-stop fires or the requested timeout elapses,
+    // whichever comes first — avoids the dual-timer issue where the MCP timeout
+    // and BleManager's internal scan timeout could conflict.
+    const scanTimeout = command.timeout ?? 10000;
+    await new Promise<void>(resolve => {
+      const deadline = setTimeout(() => { clearInterval(poll); resolve(); }, scanTimeout);
+      const poll = setInterval(() => {
+        if (!bleManager.isScanning) {
+          clearInterval(poll);
+          clearTimeout(deadline);
+          resolve();
+        }
+      }, 200);
+    });
+
+    // Ensure scan is fully stopped
+    await bleManager.stopScan();
+
+    // Collect discovered devices
+    const devices: Array<{ id: string; name: string; rssi?: number }> = [];
+    for (const [id, info] of bleManager.discoveredDevices.entries()) {
+      devices.push({ id, name: info.name, rssi: undefined });
+    }
+
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: true,
+      devices,
+    });
+    ui.log(`[MCP] Scan complete: ${devices.length} device(s) found`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ui.log(`[MCP] Scan failed: ${msg}`);
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: msg,
+    });
+  }
+}
+
+/**
+ * @brief Handle MCP connect command.
+ */
+async function handleMcpConnectCommand(command: { requestId: string; deviceId?: string; timeout?: number }): Promise<void> {
+  if (!command.deviceId) {
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: 'deviceId is required',
+    });
+    return;
+  }
+
+  ui.log(`[MCP] Connecting to device ${command.deviceId} (${command.requestId})`);
+
+  try {
+    await bleManager.connectById(command.deviceId);
+
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: true,
+      deviceName: bleManager.deviceName ?? undefined,
+      mtu: bleManager.negotiatedMTU,
+    });
+    ui.log(`[MCP] Connected to ${bleManager.deviceName ?? command.deviceId}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ui.log(`[MCP] Connection failed: ${msg}`);
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: msg,
+    });
+  }
+}
+
+/**
+ * @brief Handle MCP disconnect command.
+ */
+async function handleMcpDisconnectCommand(command: { requestId: string }): Promise<void> {
+  ui.log(`[MCP] Disconnecting device (${command.requestId})`);
+
+  try {
+    await bleManager.disconnect();
+
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: true,
+    });
+    ui.log('[MCP] Disconnected');
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ui.log(`[MCP] Disconnect failed: ${msg}`);
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: msg,
+    });
+  }
+}
+
+/**
+ * @brief Handle MCP reset command.
+ */
+async function handleMcpResetCommand(command: { requestId: string; slot?: number }): Promise<void> {
+  ui.log(`[MCP] Executing soft reset (${command.requestId})`);
+
+  const programChar = bleManager.getProgramCharacteristic();
+  if (!bleManager.isConnected || !programChar) {
+    const msg = 'Device is not connected';
+    ui.log(`[MCP] Reset failed: ${msg}`);
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: msg,
+    });
+    return;
+  }
+
+  try {
+    const resetSlot = command.slot ?? currentSlot;
+    await sendReset(programChar, (msg) => ui.log(msg), resetSlot);
+
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: true,
+    });
+    ui.log(`[MCP] Soft reset executed on slot ${resetSlot}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ui.log(`[MCP] Reset failed: ${msg}`);
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: msg,
+    });
+  }
+}
+
+/**
+ * @brief Handle MCP cancel command.
+ */
+async function handleMcpCancelCommand(command: { requestId: string; targetRequestId?: string }): Promise<void> {
+  ui.log(`[MCP] Cancelling operation ${command.targetRequestId ?? 'current'} (${command.requestId})`);
+
+  // Cancel is handled by the MCP server itself, we just acknowledge
+  mcpBridge.writeCommandResult({
+    requestId: command.requestId,
+    success: true,
+  });
+}
+
+/**
+ * @brief Handle MCP validate command.
+ */
+async function handleMcpValidateCommand(command: { requestId: string; file?: string; code?: string }): Promise<void> {
+  ui.log(`[MCP] Validating Ruby code (${command.requestId})`);
+
+  try {
+    let rubyCode: string;
+
+    if (command.code) {
+      rubyCode = command.code;
+    } else if (command.file) {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      const sourceFile = command.file ?? currentSourceFile;
+      const filePath = ws ? path.join(ws.uri.fsPath, sourceFile) : sourceFile;
+
+      // Guard against path traversal (SEC-02): resolved path must be inside workspace
+      if (ws) {
+        const resolvedFile = path.resolve(filePath);
+        const resolvedWsRoot = path.resolve(ws.uri.fsPath);
+        const rel = path.relative(resolvedWsRoot, resolvedFile);
+        if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+          throw new Error('Invalid file path: path traversal detected');
+        }
+      }
+      if (!sourceFile.endsWith('.rb')) {
+        throw new Error('Only .rb files are supported');
+      }
+
+      const fileUri = vscode.Uri.file(filePath);
+      const fileContent = await vscode.workspace.fs.readFile(fileUri);
+      rubyCode = new TextDecoder().decode(fileContent);
+    } else {
+      throw new Error('Either code or file must be provided');
+    }
+
+    // Compile
+    const compileErrors: string[] = [];
+    const result = compile(rubyCode, undefined, (err) => compileErrors.push(err));
+
+    if (result.success) {
+      mcpBridge.writeCommandResult({
+        requestId: command.requestId,
+        success: true,
+      });
+      ui.log('[MCP] Validation passed');
+    } else {
+      mcpBridge.writeCommandResult({
+        requestId: command.requestId,
+        success: false,
+        error: result.error ?? 'Syntax validation failed',
+      });
+      ui.log(`[MCP] Validation failed: ${result.error ?? 'Unknown error'}`);
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ui.log(`[MCP] Validation error: ${msg}`);
+    mcpBridge.writeCommandResult({
+      requestId: command.requestId,
+      success: false,
+      error: msg,
+    });
+  }
+}

@@ -13,6 +13,9 @@ declare const __non_webpack_require__: typeof require | undefined;
 /** @brief Cached Emscripten module instance. Initialized once by {@link initCompiler}. */
 let mrbcModule: EmscriptenModule | null = null;
 
+/** @brief Single-flight promise for compiler initialization to prevent concurrent WASM loads. */
+let compilerInitPromise: Promise<void> | null = null;
+
 /** @brief Dynamic callback for capturing mrbc stdout during compilation. */
 let activePrintCallback: ((text: string) => void) | null = null;
 /** @brief Dynamic callback for capturing mrbc stderr during compilation. */
@@ -27,27 +30,38 @@ let activePrintErrCallback: ((text: string) => void) | null = null;
  *
  * @param extensionUri  Base URI of the installed extension.
  */
-export async function initCompiler(extensionUri: vscode.Uri): Promise<void> {
-  const mrbcJsPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.js').fsPath;
-  const mrbcWasmPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.wasm').fsPath;
+export function initCompiler(extensionUri: vscode.Uri): Promise<void> {
+  // Single-flight: return the existing promise if init is already in progress (STA-13)
+  if (compilerInitPromise) { return compilerInitPromise; }
 
-  const wasmBinary = await fs.readFile(mrbcWasmPath);
-  // Use __non_webpack_require__ to bypass webpack's static analysis for dynamic WASM module loading
-  const dynamicRequire = typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require;
-  const createMrbc: CreateMrbcFactory = dynamicRequire(mrbcJsPath);
+  compilerInitPromise = (async () => {
+    const mrbcJsPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.js').fsPath;
+    const mrbcWasmPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.wasm').fsPath;
 
-  mrbcModule = await createMrbc({
-    wasmBinary: wasmBinary.buffer.slice(
-      wasmBinary.byteOffset,
-      wasmBinary.byteOffset + wasmBinary.byteLength
-    ),
-    print: (text: string) => {
-      if (activePrintCallback) { activePrintCallback(text); }
-    },
-    printErr: (text: string) => {
-      if (activePrintErrCallback) { activePrintErrCallback(text); }
-    },
+    const wasmBinary = await fs.readFile(mrbcWasmPath);
+    // Use __non_webpack_require__ to bypass webpack's static analysis for dynamic WASM module loading
+    const dynamicRequire = typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require;
+    const createMrbc: CreateMrbcFactory = dynamicRequire(mrbcJsPath);
+
+    mrbcModule = await createMrbc({
+      wasmBinary: wasmBinary.buffer.slice(
+        wasmBinary.byteOffset,
+        wasmBinary.byteOffset + wasmBinary.byteLength
+      ),
+      print: (text: string) => {
+        if (activePrintCallback) { activePrintCallback(text); }
+      },
+      printErr: (text: string) => {
+        if (activePrintErrCallback) { activePrintErrCallback(text); }
+      },
+    });
+  })().catch((error) => {
+    // Clear the promise on failure so that a subsequent call can retry
+    compilerInitPromise = null;
+    throw error;
   });
+
+  return compilerInitPromise;
 }
 
 /**

@@ -5,6 +5,33 @@ All notable changes to the OpenBlink VSCode Extension will be documented in this
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] - 2026-04-16
+
+### Added
+- **Comprehensive MCP integration overhaul** — 8 new MCP tools: `validate_ruby_code`, `scan_devices`, `connect_device`, `disconnect_device`, `soft_reset`, `get_build_diagnostics`, `get_build_status`, `cancel_build`
+- **Device command IPC** — File-based IPC via `command.json` / `command-result.json` for device operations from AI agents
+- **Build diagnostics IPC** — `build-diagnostics.json` and `build-status.json` for richer AI agent feedback
+- **Structured error codes** — `ErrorCode` enum with recovery suggestions in all MCP tool responses
+- **Operation cancellation** — `activeOperations` tracking with cancel support in MCP server
+- **MCP Status sidebar view** — Shows MCP enabled state, IPC file activity, last request/result
+- **Configurable BLE parameters** — `openblink.ble.*` settings: `writeTimeout`, `scanTimeout`, `connectionTimeout`, `maxReconnectAttempts`, `initialReconnectDelay`, `requestedMtu`, `defaultMtu`
+- **Configurable MCP parameters** — `openblink.mcp.*` settings: `statusDebounce`, `consoleDebounce`
+- **Configurable buffer sizes** — `openblink.console.bufferSize` and `openblink.metrics.historySize` settings
+- **Contributing guide** — `doc/contributing.md` and `doc/code-review-checklist.md` (20 categories, 162 items)
+- **README enrichment** — Philosophy & Goals, Build & Blink, Thinking Speed Prototyping, Layered Task Architecture, Happy Hacking sections
+
+### Fixed
+- **MCP validate routing bug** — `validate_ruby_code` MCP tool was writing to `trigger.json` instead of `command.json`, causing validation requests to be misrouted through the build pipeline and the `code` parameter to be silently ignored
+- **SEC-07: Path traversal** — Added `path.isAbsolute()` guard for `OPENBLINK_EXTENSION_DIR` in `mcp-server.ts`
+- **STA-13: Compiler double-init** — Added single-flight promise pattern to `initCompiler()` to prevent concurrent WASM double-loading
+- **ERR-02: Error typing** — Standardized error typing pattern in compiler init catch handler
+- **RDO-10: Unused code** — Removed unused `getBleWriteTimeout` import; prefixed unused parameter with `_`
+- **i18n: zh-cn/zh-tw** — Fixed "Forget Device" mistranslation (was "delete"); fixed zh-tw `view.tasks` "工作" → "任務"
+
+### Changed
+- All previously hardcoded BLE/MCP constants now read from VS Code workspace configuration
+- Improved Japanese translations with child-friendly language and emoji for elementary school users
+
 ## [0.3.3] - 2026-04-15
 
 ### Fixed
@@ -80,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial release with basic Build & Blink functionality over BLE
 
+[0.3.4]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.1...v0.3.2
 [0.3.0]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.2.0...v0.3.0

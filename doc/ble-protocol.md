@@ -44,7 +44,9 @@ Sends the program header after all data chunks are transmitted.
 
 ### Load Command (`L`)
 
-Triggers the device to load and execute the transferred program.
+Instructs the device to **reload the mruby/c VM without restarting the microcontroller**.
+
+When the device receives this command it first terminates every running mruby/c task and deletes them from the scheduler. It then re-reads the bytecodes stored in each slot from non-volatile memory (or falls back to the factory-default programs if no stored bytecode is available), creates fresh tasks for the loaded bytecodes, and resumes execution via `mrbc_run()`. Because only the VM layer is recycled, all C-level services — including the BLE connection, the debug console subscription, and the RTOS threads — remain active throughout. This is the mechanism that enables the sub-0.1-second "Blink" rewrite experience.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
@@ -53,17 +55,22 @@ Triggers the device to load and execute the transferred program.
 
 ### Reset Command (`R`)
 
-Triggers a soft reset on the device.
+Triggers a **full microcontroller reboot**.
+
+Unlike the Load command, a Reset tears down everything: the BLE connection is dropped, the mruby/c VM is destroyed, and the device goes through its entire boot sequence — hardware initialization, flash storage mount, BLE stack bring-up, and advertising restart. Use this command when a clean hardware-level restart is required, for example after a firmware update or to recover from an unexpected state.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 1 | version | `0x01` |
 | 1 | 1 | command | `'R'` (0x52) |
+| 2 | 1 | slot | *(optional)* Program slot (1 or 2) to reset. If omitted (2-byte packet), the device performs a full reboot. |
 
 ## CRC16
 
 The CRC16 algorithm uses reflected polynomial `0xD175` with seed `0xFFFF`. (provides Hamming Distance 4 protection for data lengths up to 32751 bits)
 Reference: https://users.ece.cmu.edu/~koopman/crc/index.html
+
+The firmware verifies the CRC. If the checksum does not match, the device responds with an `"ERROR: CRC mismatch"` notification.
 
 ```
 function crc16_reflect(poly, seed, data):
@@ -118,6 +125,8 @@ sequenceDiagram
 
 ## MTU Negotiation
 
+### Extension side (IDE → device)
+
 1. Try `gatt.requestMTU(512)` if available
 2. Fallback: Read `Negotiated MTU Characteristic` (uint16, little-endian), subtract 3
 3. Final fallback: Use default MTU of 20 bytes
@@ -167,6 +176,22 @@ sequenceDiagram
 - **`connectById(deviceId)`** — Looks up the device in the discovered map, stops scanning if active, and establishes a full GATT connection. The underlying `connectAsync()` is guarded by `CONNECTION_TIMEOUT` (10 s) to prevent hanging when the device is not advertising (e.g. after a previous disconnection without device restart).
 
 Previously connected devices are persisted in `globalState` as `SavedDevice` records (name + ID). When the user clicks a saved device, a scan is triggered automatically to rediscover the peripheral before connecting.
+
+## Error Notifications
+
+Errors during bytecode transfer are reported as notifications on the **Program** characteristic (not Console). Common error strings:
+
+| Error string | Cause |
+|-------------|-------|
+| `"ERROR: Blink version mismatch"` | Protocol version ≠ `0x01` |
+| `"ERROR: Blink data size error"` | Data chunk header size + payload ≠ received length |
+| `"ERROR: Size exceeds buffer limits"` | Offset + size > `BLINK_MAX_BYTECODE_SIZE` (device side) |
+| `"ERROR: CRC mismatch"` | CRC16 verification failed |
+| `"ERROR: Blink program error"` | Storage write failed |
+| `"ERROR: Blink size mismatch"` | Program command length ≠ expected 8 bytes |
+| `"ERROR: Blink unknown type"` | Unrecognized command byte |
+
+On success, the device sends `"OK slot:<N>"` via the Program characteristic.
 
 ## Console
 

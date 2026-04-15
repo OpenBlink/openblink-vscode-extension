@@ -13,6 +13,12 @@ import {
   NobleService,
   NobleCharacteristic,
   BLE_CONSTANTS,
+  getBleScanTimeout,
+  getBleConnectionTimeout,
+  getBleMaxReconnectAttempts,
+  getBleInitialReconnectDelay,
+  getBleRequestedMtu,
+  getBleDefaultMtu,
 } from './types';
 
 /**
@@ -87,7 +93,7 @@ export class BleManager {
   /** @brief Flag to suppress auto-reconnect after a user-initiated disconnect. */
   private userInitiatedDisconnect = false;
   /** @brief Effective MTU for data payloads. */
-  private _negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+  private _negotiatedMTU = getBleDefaultMtu();
   /** @brief Bound handler for console data events, stored for proper removal. */
   private consoleDataHandler: ((data: Buffer) => void) | null = null;
   /** @brief Guard flag to prevent concurrent connectById() calls. */
@@ -135,7 +141,7 @@ export class BleManager {
   get isScanning(): boolean { return this._isScanning; }
   /** @brief Current reconnect attempt count and maximum for UI display. */
   get reconnectInfo(): { attempt: number; max: number } {
-    return { attempt: this.reconnectAttempts, max: BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS };
+    return { attempt: this.reconnectAttempts, max: getBleMaxReconnectAttempts() };
   }
   /** @brief Devices discovered during the current or most recent scan. */
   get discoveredDevices(): ReadonlyMap<string, DeviceInfo> { return this._discoveredDevices; }
@@ -189,7 +195,7 @@ export class BleManager {
         this.log(`[BLE] On macOS: System Settings > Privacy & Security > Bluetooth`);
         this.log(`[BLE] On Linux: Ensure BlueZ is running (sudo systemctl status bluetooth)`);
         reject(new Error(l10n.t('Bluetooth initialization timeout') + ` (state: ${noble.state})`));
-      }, BLE_CONSTANTS.BLUETOOTH_INIT_TIMEOUT);
+      }, BLE_CONSTANTS.BLUETOOTH_INIT_TIMEOUT); // Bluetooth init is not configurable (platform dependent)
 
       const stateHandler = (state: string) => {
         this.log(`[BLE] Bluetooth state changed: ${state}`);
@@ -220,7 +226,7 @@ export class BleManager {
    *
    * Discovered devices are emitted via {@link onDeviceDiscovered} and
    * accumulated in {@link discoveredDevices}. Scanning stops automatically
-   * after {@link BLE_CONSTANTS.SCAN_TIMEOUT}.
+   * after the configured scan timeout.
    *
    * @throws Error if Bluetooth initialization times out or the adapter is off.
    */
@@ -256,7 +262,7 @@ export class BleManager {
 
     this.scanTimer = setTimeout(() => {
       this.stopScan();
-    }, BLE_CONSTANTS.SCAN_TIMEOUT);
+    }, getBleScanTimeout());
   }
 
   /**
@@ -326,7 +332,7 @@ export class BleManager {
       this.programCharacteristic = null;
       this.consoleCharacteristic = null;
       this.negotiatedMtuCharacteristic = null;
-      this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+      this._negotiatedMTU = getBleDefaultMtu();
       this.setConnectionState('disconnected');
       throw error;
     } finally {
@@ -337,7 +343,7 @@ export class BleManager {
   /**
    * @brief Establish a full connection to the given peripheral.
    *
-   * Attempts to connect with a timeout of {@link BLE_CONSTANTS.CONNECTION_TIMEOUT}
+   * Attempts to connect with a timeout of the configured connection timeout
    * to prevent hanging when the device is not advertising (e.g. after a
    * previous disconnection without device restart).  If the timeout fires,
    * the pending connection attempt is cancelled via `disconnectAsync` and the
@@ -361,7 +367,7 @@ export class BleManager {
         new Promise<never>((_, reject) => {
           connectTimer = setTimeout(() => {
             reject(new Error(l10n.t('Connection timeout')));
-          }, BLE_CONSTANTS.CONNECTION_TIMEOUT);
+          }, getBleConnectionTimeout());
         }),
       ]);
     } catch (error) {
@@ -395,7 +401,7 @@ export class BleManager {
       const timer = setTimeout(() => {
         openBlinkService.removeListener('characteristicsDiscover', onDiscover);
         reject(new Error(l10n.t('Required characteristics not found')));
-      }, BLE_CONSTANTS.CHARACTERISTIC_DISCOVERY_TIMEOUT);
+      }, BLE_CONSTANTS.CHARACTERISTIC_DISCOVERY_TIMEOUT); // Not configurable - GATT protocol timing
       openBlinkService.once('characteristicsDiscover', onDiscover);
       openBlinkService.discoverCharacteristics();
     });
@@ -439,9 +445,9 @@ export class BleManager {
    *
    * Attempts GATT-level MTU negotiation first (`gatt.requestMTU`). If
    * unavailable, falls back to reading the device's advertised MTU from
-   * the dedicated characteristic. On failure, resets to {@link BLE_CONSTANTS.DEFAULT_MTU}.
+   * the dedicated characteristic. On failure, resets to the configured default MTU.
    *
-   * The final value is clamped to at least {@link BLE_CONSTANTS.MIN_USABLE_MTU}
+   * The final value is clamped to at least MIN_USABLE_MTU
    * to guarantee that data packets always carry at least one payload byte.
    *
    * @param device  The connected Noble peripheral.
@@ -449,7 +455,7 @@ export class BleManager {
   private async negotiateMTU(device: NoblePeripheral): Promise<void> {
     try {
       if (device.gatt?.requestMTU) {
-        this._negotiatedMTU = await device.gatt.requestMTU(BLE_CONSTANTS.REQUESTED_MTU);
+        this._negotiatedMTU = await device.gatt.requestMTU(getBleRequestedMtu());
       } else if (this.negotiatedMtuCharacteristic) {
         const buffer = await this.negotiatedMtuCharacteristic.readAsync();
         if (buffer.length >= 2) {
@@ -458,13 +464,14 @@ export class BleManager {
         }
       }
     } catch {
-      this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+      this._negotiatedMTU = getBleDefaultMtu();
     }
 
     // Ensure MTU is large enough for at least 1 byte of payload per packet
     if (this._negotiatedMTU < BLE_CONSTANTS.MIN_USABLE_MTU) {
-      this.log(`[BLE] Negotiated MTU (${this._negotiatedMTU}) is below minimum (${BLE_CONSTANTS.MIN_USABLE_MTU}), falling back to DEFAULT_MTU (${BLE_CONSTANTS.DEFAULT_MTU})`);
-      this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+      const defaultMtu = getBleDefaultMtu();
+      this.log(`[BLE] Negotiated MTU (${this._negotiatedMTU}) is below minimum (${BLE_CONSTANTS.MIN_USABLE_MTU}), falling back to DEFAULT_MTU (${defaultMtu})`);
+      this._negotiatedMTU = defaultMtu;
     }
   }
 
@@ -473,7 +480,7 @@ export class BleManager {
    *
    * Resets characteristic references and MTU. If the disconnect was
    * user-initiated, transitions to "disconnected". Otherwise, attempts
-   * automatic reconnection up to {@link BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS}.
+   * automatic reconnection up to the configured max reconnect attempts.
    */
   private handleDisconnect(): void {
     this.log(`[BLE] ${l10n.t('Device disconnected: {0}', this.deviceName)}`);
@@ -482,7 +489,7 @@ export class BleManager {
     this.programCharacteristic = null;
     this.consoleCharacteristic = null;
     this.negotiatedMtuCharacteristic = null;
-    this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+    this._negotiatedMTU = getBleDefaultMtu();
 
     if (this.userInitiatedDisconnect) {
       this.userInitiatedDisconnect = false;
@@ -492,7 +499,7 @@ export class BleManager {
       return;
     }
 
-    if (this.reconnectAttempts < BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS) {
+    if (this.reconnectAttempts < getBleMaxReconnectAttempts()) {
       this.attemptReconnect();
     } else {
       this.log(`[BLE] ${l10n.t('Max reconnection attempts reached')}`);
@@ -506,13 +513,13 @@ export class BleManager {
    * @brief Schedule an automatic reconnection attempt with exponential back-off.
    *
    * Delay doubles with each successive attempt. Gives up after
-   * {@link BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS}.
+   * the configured max reconnect attempts.
    */
   private attemptReconnect(): void {
     this.reconnectAttempts++;
-    const delay = BLE_CONSTANTS.INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts - 1);
+    const delay = getBleInitialReconnectDelay() * Math.pow(2, this.reconnectAttempts - 1);
     this.setConnectionState('reconnecting');
-    this.log(`[BLE] ${l10n.t('Reconnecting ({0}/{1})...', String(this.reconnectAttempts), String(BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS))}`);
+    this.log(`[BLE] ${l10n.t('Reconnecting ({0}/{1})...', String(this.reconnectAttempts), String(getBleMaxReconnectAttempts()))}`);
 
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
@@ -523,7 +530,7 @@ export class BleManager {
         this.reconnectAttempts = 0;
         this.log(`[BLE] ${l10n.t('Reconnected successfully')}`);
       } catch {
-        if (this.reconnectAttempts < BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS) {
+        if (this.reconnectAttempts < getBleMaxReconnectAttempts()) {
           this.attemptReconnect();
         } else {
           this.log(`[BLE] ${l10n.t('Max reconnection attempts reached')}`);
@@ -543,7 +550,7 @@ export class BleManager {
    */
   async disconnect(): Promise<void> {
     this.userInitiatedDisconnect = true;
-    this.reconnectAttempts = BLE_CONSTANTS.MAX_RECONNECT_ATTEMPTS;
+    this.reconnectAttempts = getBleMaxReconnectAttempts();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -566,7 +573,7 @@ export class BleManager {
       this.consoleCharacteristic = null;
       this.negotiatedMtuCharacteristic = null;
       this.currentDevice = null;
-      this._negotiatedMTU = BLE_CONSTANTS.DEFAULT_MTU;
+      this._negotiatedMTU = getBleDefaultMtu();
       this.reconnectAttempts = 0;
       this.setConnectionState('disconnected');
     }

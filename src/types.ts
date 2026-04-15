@@ -3,6 +3,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 OpenBlink All Rights Reserved.
  */
 
+import * as vscode from 'vscode';
 import type { Peripheral, Service, Characteristic, Descriptor } from '@abandonware/noble';
 
 // ============================================================================
@@ -250,3 +251,95 @@ export const BLE_CONSTANTS = {
   /** @brief Minimum usable MTU (DATA_HEADER_SIZE + 1) to guarantee at least 1 byte of payload. */
   MIN_USABLE_MTU: 7,
 };
+
+// ============================================================================
+// Configuration Helpers
+// ============================================================================
+
+/**
+ * @brief Get the configured BLE write timeout from VS Code settings.
+ * @returns Timeout in milliseconds (default: 10000).
+ */
+export function getBleWriteTimeout(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('writeTimeout', 10000);
+}
+
+/**
+ * @brief Get the configured BLE scan timeout from VS Code settings.
+ * @returns Timeout in milliseconds (default: 10000).
+ */
+export function getBleScanTimeout(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('scanTimeout', 10000);
+}
+
+/**
+ * @brief Get the configured BLE connection timeout from VS Code settings.
+ * @returns Timeout in milliseconds (default: 10000).
+ */
+export function getBleConnectionTimeout(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('connectionTimeout', 10000);
+}
+
+/**
+ * @brief Get the configured maximum reconnection attempts from VS Code settings.
+ * @returns Maximum attempts (default: 5).
+ */
+export function getBleMaxReconnectAttempts(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('maxReconnectAttempts', 5);
+}
+
+/**
+ * @brief Get the configured initial reconnection delay from VS Code settings.
+ * @returns Delay in milliseconds (default: 1000).
+ */
+export function getBleInitialReconnectDelay(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('initialReconnectDelay', 1000);
+}
+
+/**
+ * @brief Get the configured requested MTU from VS Code settings.
+ * @returns Requested MTU in bytes (default: 512).
+ */
+export function getBleRequestedMtu(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('requestedMtu', 512);
+}
+
+/**
+ * @brief Get the configured default MTU from VS Code settings.
+ * @returns Default MTU in bytes (default: 20).
+ */
+export function getBleDefaultMtu(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('defaultMtu', 20);
+}
+
+/**
+ * @brief Get the configured MCP status debounce interval from VS Code settings.
+ * @returns Debounce interval in milliseconds (default: 1000).
+ */
+export function getMcpStatusDebounce(): number {
+  return vscode.workspace.getConfiguration('openblink.mcp').get<number>('statusDebounce', 1000);
+}
+
+/**
+ * @brief Get the configured MCP console debounce interval from VS Code settings.
+ * @returns Debounce interval in milliseconds (default: 2000).
+ */
+export function getMcpConsoleDebounce(): number {
+  return vscode.workspace.getConfiguration('openblink.mcp').get<number>('consoleDebounce', 2000);
+}
+
+/**
+ * @brief Get the configured console buffer size from VS Code settings.
+ * @returns Buffer size in lines (default: 100).
+ */
+export function getConsoleBufferSize(): number {
+  return vscode.workspace.getConfiguration('openblink.console').get<number>('bufferSize', 100);
+}
+
+/**
+ * @brief Get the configured metrics history size from VS Code settings.
+ * @returns History size in entries (default: 100).
+ */
+export function getMetricsHistorySize(): number {
+  return vscode.workspace.getConfiguration('openblink.metrics').get<number>('historySize', 100);
+}
