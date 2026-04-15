@@ -153,7 +153,7 @@ Noble's runtime dependencies are explicitly unignored in `.vscodeignore`:
 | Dependency | Included paths | Purpose |
 |------------|---------------|---------|
 | `@abandonware/noble` | `package.json`, `index.js`, `with-custom-binding.js`, `lib/**/*.js`, `lib/**/*.json`, `build/Release/binding.node` | BLE library + native addon |
-| `@abandonware/bluetooth-hci-socket` | `package.json`, `index.js`, `lib/native.js`, `build/Release/bluetooth_hci_socket.node` | Linux HCI socket transport (optional dep, installed only on Linux) |
+| `@abandonware/bluetooth-hci-socket` | `package.json`, `index.js`, `lib/native.js`, `build/Release/bluetooth_hci_socket.node` | Optional dependency; used by the extension for Linux HCI-socket transport |
 | `node-gyp-build` | `**` | Locates and loads `.node` binary at runtime (macOS/Windows) |
 | `debug` | `**` | Logging in noble's JS code |
 | `ms` | `**` | Dependency of `debug` |
