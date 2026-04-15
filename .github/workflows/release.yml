@@ -168,11 +168,11 @@ jobs:
       - name: Publish summary
         if: ${{ !cancelled() }}
         run: |
-          echo "## Publish Results" >> $GITHUB_STEP_SUMMARY
-          echo "| Channel | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| VS Code Marketplace | ${{ steps.vsce.outcome }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Open VSX | ${{ steps.ovsx.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "## Publish Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Channel | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| VS Code Marketplace | ${{ steps.vsce.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Open VSX | ${{ steps.ovsx.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.vsce.outcome }}" = "failure" ]; then
             echo "::warning::VS Code Marketplace publish failed"
           fi
