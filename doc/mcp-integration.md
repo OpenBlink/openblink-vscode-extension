@@ -66,7 +66,13 @@ This provides a transparent experience — Cascade simply edits Ruby code and
 the device updates instantly, without needing to explicitly call the
 `build_and_blink` MCP tool.
 
-To use this, copy the `.windsurf/` directory to your project root:
+The hook files live in the repository root so they activate automatically
+when you develop this extension itself in Windsurf.  They are **not**
+included in the published VSIX because Windsurf reads hooks from the
+workspace root, not from the extension installation directory.
+
+To use the Cascade Hook in your own project, copy the `.windsurf/`
+directory from this repository to your project root:
 
 ```
 .windsurf/
