@@ -1061,7 +1061,14 @@ server.registerTool('get_build_diagnostics', {
     openWorldHint: false,
   },
 }, async () => {
-    const dir = getIpcDir();
+    let dir: string;
+    try {
+      dir = getIpcDir();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
+    }
+
     const diagnostics = readJsonFile<{
       timestamp: string;
       file: string;
