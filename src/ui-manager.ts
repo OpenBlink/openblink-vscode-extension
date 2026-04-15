@@ -19,12 +19,11 @@ const MAX_METRICS_HISTORY = 100;
 let outputChannel: vscode.OutputChannel;
 
 /**
- * @brief Create and show the "OpenBlink" output channel.
+ * @brief Create the "OpenBlink" output channel.
  * @returns The created {@link vscode.OutputChannel}.
  */
 export function createOutputChannel(): vscode.OutputChannel {
   outputChannel = vscode.window.createOutputChannel('OpenBlink');
-  outputChannel.show();
   return outputChannel;
 }
 
@@ -34,6 +33,21 @@ export function createOutputChannel(): vscode.OutputChannel {
  */
 export function getOutputChannel(): vscode.OutputChannel {
   return outputChannel;
+}
+
+/**
+ * @brief Reveal the output channel once, without stealing focus.
+ *
+ * Intended to be called on the first user-initiated BLE operation so that
+ * diagnostic and connection logs become visible without forcing the Output
+ * panel open during activation.
+ */
+let _outputShown = false;
+export function showOutputChannelOnce(): void {
+  if (!_outputShown && outputChannel) {
+    _outputShown = true;
+    outputChannel.show(true);
+  }
 }
 
 /**

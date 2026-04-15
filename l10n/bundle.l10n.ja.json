@@ -68,5 +68,6 @@
   "Saved Devices": "ほぞんしたデバイス",
   "Connected": "せつぞくずみ",
   "Connecting...": "せつぞくちゅう...",
-  "Device not found. Please scan again.": "デバイスがみつかりません。もういちどスキャンしてください。"
+  "Device not found. Please scan again.": "デバイスがみつかりません。もういちどスキャンしてください。",
+  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "Bluetooth モジュールのよみこみにしっぱいしました。このプラットフォームでは BLE がつかえないかもしれません。"
 }

@@ -386,6 +386,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Legacy command kept for backward-compatibility; now starts a scan
     // instead of showing a QuickPick.
     vscode.commands.registerCommand('openblink.connectDevice', async () => {
+      ui.showOutputChannelOnce();
       try {
         await bleManager.startScan();
       } catch (error) {
@@ -396,6 +397,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Start scanning for OpenBlink devices (Devices view title-bar button).
     vscode.commands.registerCommand('openblink.scanDevices', async () => {
+      ui.showOutputChannelOnce();
       try {
         await bleManager.startScan();
       } catch (error) {

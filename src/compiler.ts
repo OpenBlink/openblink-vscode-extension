@@ -3,7 +3,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 OpenBlink All Rights Reserved.
  */
 
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import * as vscode from 'vscode';
 import * as l10n from '@vscode/l10n';
 import { CompileResult, CreateMrbcFactory, EmscriptenModule } from './types';
@@ -31,7 +31,7 @@ export async function initCompiler(extensionUri: vscode.Uri): Promise<void> {
   const mrbcJsPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.js').fsPath;
   const mrbcWasmPath = vscode.Uri.joinPath(extensionUri, 'out', 'mrbc.wasm').fsPath;
 
-  const wasmBinary = fs.readFileSync(mrbcWasmPath);
+  const wasmBinary = await fs.readFile(mrbcWasmPath);
   // Use __non_webpack_require__ to bypass webpack's static analysis for dynamic WASM module loading
   const dynamicRequire = typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require;
   const createMrbc: CreateMrbcFactory = dynamicRequire(mrbcJsPath);

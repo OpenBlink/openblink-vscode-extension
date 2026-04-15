@@ -68,5 +68,6 @@
   "Saved Devices": "已儲存的裝置",
   "Connected": "已連接",
   "Connecting...": "連接中...",
-  "Device not found. Please scan again.": "找不到裝置。請重新掃描。"
+  "Device not found. Please scan again.": "找不到裝置。請重新掃描。",
+  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "無法載入藍牙模組。此平台可能不支援 BLE。"
 }
