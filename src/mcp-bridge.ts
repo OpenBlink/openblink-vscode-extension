@@ -102,6 +102,27 @@ export function isEnabled(): boolean {
 }
 
 /**
+ * @brief Check whether MCP bridge should be initialized.
+ * 
+ * Checks if MCP is enabled and if we're in a workspace context.
+ * This allows the extension to defer MCP initialization until needed.
+ * 
+ * @returns `true` if MCP should be initialized.
+ */
+export function shouldInitialize(): boolean {
+  if (!enabled) {
+    return false;
+  }
+  
+  // Check if we're in a workspace
+  if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
  * @brief Update the enabled state.
  *
  * When transitioning from enabled → disabled, the trigger watcher is disposed.
