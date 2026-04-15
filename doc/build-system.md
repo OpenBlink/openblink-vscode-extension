@@ -102,7 +102,7 @@ The extension uses **platform-specific VSIX builds** to include the correct nati
 |----------|---------------|-----------|
 | macOS (arm64 / x64) | CoreBluetooth (`binding.node`) | `node-gyp-build` → `build/Release/binding.node` |
 | Windows (x64) | WinRT (`binding.node`) | `node-gyp-build` → `build/Release/binding.node` |
-| Linux (x64) | None (pure JS HCI socket) | `@abandonware/bluetooth-hci-socket` via BlueZ/D-Bus |
+| Linux (x64) | HCI socket (`bluetooth_hci_socket.node`) | `@abandonware/bluetooth-hci-socket` → `build/Release/bluetooth_hci_socket.node` |
 
 Since `build/Release/` can only hold one platform's binary, a universal VSIX is not possible.
 
@@ -153,11 +153,12 @@ Noble's runtime dependencies are explicitly unignored in `.vscodeignore`:
 | Dependency | Included paths | Purpose |
 |------------|---------------|---------|
 | `@abandonware/noble` | `package.json`, `index.js`, `with-custom-binding.js`, `lib/**/*.js`, `lib/**/*.json`, `build/Release/binding.node` | BLE library + native addon |
-| `node-gyp-build` | `**` | Locates and loads `.node` binary at runtime |
+| `@abandonware/bluetooth-hci-socket` | `package.json`, `index.js`, `lib/native.js`, `build/Release/bluetooth_hci_socket.node` | Optional dependency; used by the extension for Linux HCI-socket transport |
+| `node-gyp-build` | `**` | Locates and loads `.node` binary at runtime (macOS/Windows) |
 | `debug` | `**` | Logging in noble's JS code |
 | `ms` | `**` | Dependency of `debug` |
 
-Build-time only dependencies (`node-addon-api`, `napi-thread-safe-callback`) and noble's C++ source files (`*.cc`, `*.h`, `*.mm`, `*.gyp`) are excluded.
+Build-time only dependencies (`node-addon-api`, `napi-thread-safe-callback`, `nan`, `node-gyp`, `@mapbox/node-pre-gyp`) and native C++ source files (`*.cc`, `*.h`, `*.mm`, `*.gyp`) are excluded.
 
 > **Note**: `vsce` uses flat negate semantics — a `!` pattern always overrides all ignore patterns regardless of order. To exclude build artifacts, each negate pattern must target only the specific files needed at runtime (e.g., `!noble/lib/**/*.js`) rather than broad globs (e.g., `!noble/**`).
 
