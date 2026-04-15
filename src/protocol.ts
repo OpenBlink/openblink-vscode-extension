@@ -3,7 +3,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 OpenBlink All Rights Reserved.
  */
 
-import { BLE_CONSTANTS, NobleCharacteristic } from './types';
+import { BLE_CONSTANTS, NobleCharacteristic, getBleWriteTimeout } from './types';
 
 /**
  * @brief Compute a reflected CRC-16 checksum.
@@ -39,13 +39,13 @@ export function crc16_reflect(poly: number, seed: number, data: Uint8Array): num
  *
  * @param characteristic  Target BLE characteristic.
  * @param buffer          Data to write.
- * @param timeout         Maximum time to wait in milliseconds (default: {@link BLE_CONSTANTS.WRITE_TIMEOUT}).
+ * @param timeout         Maximum time to wait in milliseconds (default: configured write timeout).
  * @throws Error if the write does not complete within the timeout.
  */
 async function writeCharacteristic(
   characteristic: NobleCharacteristic,
   buffer: ArrayBuffer,
-  timeout: number = BLE_CONSTANTS.WRITE_TIMEOUT
+  timeout: number = getBleWriteTimeout()
 ): Promise<void> {
   const nodeBuffer = Buffer.from(buffer);
 

@@ -137,6 +137,83 @@
           "type": "boolean",
           "default": true,
           "description": "%config.mcp.enabled%"
+        },
+        "openblink.ble.writeTimeout": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "%config.ble.writeTimeout%"
+        },
+        "openblink.ble.scanTimeout": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "%config.ble.scanTimeout%"
+        },
+        "openblink.ble.connectionTimeout": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "%config.ble.connectionTimeout%"
+        },
+        "openblink.ble.maxReconnectAttempts": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 20,
+          "description": "%config.ble.maxReconnectAttempts%"
+        },
+        "openblink.ble.initialReconnectDelay": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "%config.ble.initialReconnectDelay%"
+        },
+        "openblink.ble.requestedMtu": {
+          "type": "number",
+          "default": 512,
+          "minimum": 23,
+          "maximum": 1024,
+          "description": "%config.ble.requestedMtu%"
+        },
+        "openblink.ble.defaultMtu": {
+          "type": "number",
+          "default": 20,
+          "minimum": 7,
+          "maximum": 512,
+          "description": "%config.ble.defaultMtu%"
+        },
+        "openblink.mcp.statusDebounce": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "%config.mcp.statusDebounce%"
+        },
+        "openblink.mcp.consoleDebounce": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "%config.mcp.consoleDebounce%"
+        },
+        "openblink.console.bufferSize": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "%config.console.bufferSize%"
+        },
+        "openblink.metrics.historySize": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "%config.metrics.historySize%"
         }
       }
     },

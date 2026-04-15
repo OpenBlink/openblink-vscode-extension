@@ -6,10 +6,10 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import * as l10n from '@vscode/l10n';
-import { ConnectionState, DeviceInfo, MetricsData, MetricsHistory, MetricsStats, SavedDevice } from './types';
+import { ConnectionState, DeviceInfo, MetricsData, MetricsHistory, MetricsStats, SavedDevice, getConsoleBufferSize, getMetricsHistorySize } from './types';
 
-/** @brief Maximum number of entries retained in each metrics history array. */
-const MAX_METRICS_HISTORY = 100;
+/** @brief Get the maximum number of entries retained in each metrics history array from settings. */
+function getMaxMetricsHistory(): number { return getMetricsHistorySize(); }
 
 // ============================================================================
 // Output Channel
@@ -62,8 +62,8 @@ export function log(message: string): void {
 // Console Output Buffer (for MCP integration)
 // ============================================================================
 
-/** @brief Maximum number of lines retained in the console output ring buffer. */
-const MAX_CONSOLE_BUFFER = 100;
+/** @brief Get the maximum number of lines retained in the console output ring buffer from settings. */
+function getMaxConsoleBuffer(): number { return getConsoleBufferSize(); }
 
 /** @brief Ring buffer for [DEVICE] console output lines, exposed to MCP server via file IPC. */
 const consoleBuffer: string[] = [];
@@ -79,15 +79,16 @@ const consoleBuffer: string[] = [];
  */
 export function appendConsoleLog(line: string): void {
   consoleBuffer.push(line);
-  if (consoleBuffer.length > MAX_CONSOLE_BUFFER) {
-    consoleBuffer.splice(0, consoleBuffer.length - MAX_CONSOLE_BUFFER);
+  const maxBuffer = getMaxConsoleBuffer();
+  if (consoleBuffer.length > maxBuffer) {
+    consoleBuffer.splice(0, consoleBuffer.length - maxBuffer);
   }
 }
 
 /**
  * @brief Return a snapshot of the console ring buffer.
  * @returns An array of the most recent console output lines (up to
- *          {@link MAX_CONSOLE_BUFFER}).
+ *          the configured buffer size).
  */
 export function getConsoleLog(): string[] {
   return [...consoleBuffer];
@@ -221,7 +222,7 @@ const metricsHistory: MetricsHistory = {
  */
 function addToHistory(arr: number[], value: number): void {
   arr.push(value);
-  while (arr.length > MAX_METRICS_HISTORY) { arr.shift(); }
+  while (arr.length > getMaxMetricsHistory()) { arr.shift(); }
 }
 
 /**

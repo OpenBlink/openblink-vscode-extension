@@ -26,7 +26,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ConnectionState, MetricsData, MetricsStats } from './types';
+import { ConnectionState, MetricsData, MetricsStats, getMcpStatusDebounce, getMcpConsoleDebounce } from './types';
 import { getConsoleLog, log } from './ui-manager';
 
 // ============================================================================
@@ -252,10 +252,10 @@ export function updateBuildResult(success: boolean, error?: string): void {
   scheduleStatusWrite();
 }
 
-/** @brief Schedule a debounced write of `status.json` (1 second delay). */
+/** @brief Schedule a debounced write of `status.json`. */
 function scheduleStatusWrite(): void {
   if (statusTimer) { clearTimeout(statusTimer); }
-  statusTimer = setTimeout(() => flushStatus(), 1000);
+  statusTimer = setTimeout(() => flushStatus(), getMcpStatusDebounce());
 }
 
 /** @brief Write the current status to `status.json`. */
@@ -289,7 +289,7 @@ let consoleTimer: ReturnType<typeof setTimeout> | undefined;
 export function scheduleConsoleWrite(): void {
   if (!enabled) { return; }
   if (consoleTimer) { clearTimeout(consoleTimer); }
-  consoleTimer = setTimeout(() => flushConsole(), 2000);
+  consoleTimer = setTimeout(() => flushConsole(), getMcpConsoleDebounce());
 }
 
 /** @brief Write the current console buffer to `openblink-console.log`. */

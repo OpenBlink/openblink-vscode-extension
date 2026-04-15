@@ -21,5 +21,16 @@
   "view.boardReference": "Board Reference",
   "command.setupMcp": "Setup MCP Server",
   "config.mcp.enabled": "Enable MCP (Model Context Protocol) integration for AI agent access to Build & Blink, device info, console output, metrics, and board reference",
-  "view.mcpStatus": "MCP Status"
+  "view.mcpStatus": "MCP Status",
+  "config.ble.writeTimeout": "BLE characteristic write timeout in milliseconds (1000-60000)",
+  "config.ble.scanTimeout": "Device scan timeout in milliseconds (1000-60000)",
+  "config.ble.connectionTimeout": "BLE connection timeout in milliseconds (1000-60000)",
+  "config.ble.maxReconnectAttempts": "Maximum number of automatic reconnection attempts (0-20)",
+  "config.ble.initialReconnectDelay": "Initial reconnection delay in milliseconds, doubles on each retry (100-10000)",
+  "config.ble.requestedMtu": "Requested MTU size for GATT negotiation in bytes (23-1024)",
+  "config.ble.defaultMtu": "Default MTU fallback value when negotiation fails in bytes (7-512)",
+  "config.mcp.statusDebounce": "Status file write debounce interval in milliseconds (100-10000)",
+  "config.mcp.consoleDebounce": "Console log file write debounce interval in milliseconds (100-10000)",
+  "config.console.bufferSize": "Maximum number of console output lines to retain (10-1000)",
+  "config.metrics.historySize": "Maximum number of metrics history entries to retain (10-1000)"
 }
