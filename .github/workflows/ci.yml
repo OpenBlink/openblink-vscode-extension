@@ -28,6 +28,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify native binding (macOS/Windows)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          echo "Noble native binding:"
+          ls -la node_modules/@abandonware/noble/build/Release/binding.node
+
+      - name: Verify native binding (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "bluetooth-hci-socket native binding:"
+          ls -la node_modules/@abandonware/bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node
+
       - name: Lint
         run: npm run lint
 
