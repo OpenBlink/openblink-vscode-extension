@@ -57,6 +57,13 @@ Requires VS Code 1.96.0 or later.
 
 The currently active `.rb` file in the editor is always the one that gets compiled and transferred. Previously connected devices appear in the **Saved Devices** section and can be reconnected with a single click or removed via the trash icon.
 
+## Contributing
+
+We welcome contributions from the community! Please see:
+
+- [Contributing Guide](doc/contributing.md) — Development setup, code style, and release process
+- [Code Review Checklist](doc/code-review-checklist.md) — Optional reference for thorough reviews or when requesting AI-assisted code review
+
 ## Documentation
 
 - [Architecture](doc/architecture.md) — System overview with Mermaid diagrams
@@ -66,7 +73,6 @@ The currently active `.rb` file in the editor is always the one that gets compil
 - [Board Configuration](doc/board-configuration.md) — How to add new board definitions
 - [MCP Integration](doc/mcp-integration.md) — AI agent setup for Windsurf, VS Code Copilot, Cursor, and Cline
 - [Internationalization](doc/i18n.md) — Multi-language support guide
-- [Contributing](doc/contributing.md) — Development setup, code guidelines, and release process
 - [Security](SECURITY.md) — Security policy and dependency audit
 
 ## License

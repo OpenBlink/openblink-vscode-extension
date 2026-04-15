@@ -184,3 +184,13 @@ See [Board Configuration](board-configuration.md).
 ## Adding Translations
 
 See [Internationalization](i18n.md).
+
+## Code Review Reference
+
+The [Code Review Checklist](code-review-checklist.md) is an optional reference document. Use it when:
+
+- You want a comprehensive self-review checklist before submitting a PR
+- Requesting AI-assisted code review (providing structured context to AI agents)
+- Deep-diving into specific areas like security or cross-platform compatibility
+
+Contributions of all sizes are welcome — no need to go through the entire checklist for small fixes or documentation updates.
