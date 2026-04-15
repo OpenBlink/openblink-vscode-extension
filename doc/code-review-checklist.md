@@ -55,7 +55,7 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | ID | Priority | Check | Details | Key Files | Verification | Status |
 |----|----------|-------|---------|-----------|--------------|--------|
 | SEC-01 | Critical | Input validation | All public APIs validate parameters at entry (type, range, empty, null). No unchecked casts from `unknown`. | All `src/*.ts` | 🤖 Search for unchecked `as` casts and public functions without parameter validation | |
-| SEC-02 | Critical | Path traversal prevention | File paths from external input (MCP trigger, config, env vars) resolved with `path.resolve()` and checked via `path.relative()` against workspace/extension root. Never use `startsWith()` for path containment checks. | `mcp-bridge.ts`, `mcp-server.ts`, `board-manager.ts` | 🤖 Grep for `startsWith` used on file paths; verify all `path.relative()` checks include `..` guard | |
+| SEC-02 | Critical | Path traversal prevention | File paths from external input (MCP trigger, config, env vars) resolved with `path.resolve()` and checked via `path.relative()` against workspace/extension root. Never use `startsWith()` for path containment checks. (See also PLT-02) | `mcp-bridge.ts`, `mcp-server.ts`, `board-manager.ts` | 🤖 Grep for `startsWith` used on file paths; verify all `path.relative()` checks include `..` guard | |
 | SEC-03 | High | BLE console sanitization | Control characters (U+0000–U+0008, U+000B–U+001F, U+007F) stripped from device output before display/logging to prevent terminal injection. | `extension.ts` (onConsoleOutput handler) | 🤖 Verify regex `[\x00-\x08\x0B-\x1F\x7F]` is applied before all display/logging paths | |
 | SEC-04 | High | JSON parse safety | All `JSON.parse()` of external data (IPC files, board config) wrapped in try/catch. Malformed input never crashes the extension. | `mcp-bridge.ts`, `mcp-server.ts`, `board-manager.ts` | 🤖 Grep for `JSON.parse` and verify each is inside try/catch | |
 | SEC-05 | High | Prompt injection / jacking | MCP tool outputs are bounded (`MAX_REF_SIZE`). No raw user input or device output is interpolated into AI system prompts. Board reference is read-only from the extension directory. | `mcp-server.ts` | Review all MCP tool return values; verify no string interpolation of untrusted data into prompt-like contexts | |
@@ -86,8 +86,8 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | STA-09 | Medium | FileSystemWatcher race | `trigger.json` consumed with read + unlink in same try block. Concurrent onDidCreate/onDidChange handlers safely skip if file already consumed. | `mcp-bridge.ts` | Review trigger consumption logic for race conditions | |
 | STA-10 | Medium | Graceful degradation | Compilation works without device connection. MCP works without BLE. Extension starts without workspace. | `extension.ts` | Test: activate with no workspace, no device, MCP disabled | |
 | STA-11 | Medium | MCP server crash handling | `uncaughtException` and `unhandledRejection` handlers log to stderr and exit. No silent hangs. | `mcp-server.ts` | 🤖 Verify process crash handlers exist at module level | |
-| STA-12 | Low | Reconnection backoff | Exponential delay capped at MAX_RECONNECT_ATTEMPTS. User-initiated disconnect suppresses auto-reconnect. | `ble-manager.ts`, `types.ts` | Review reconnection logic and constant values | |
-| STA-13 | Medium | Lazy init single-flight | Compiler init uses a single promise to prevent duplicate WASM loading. | `compiler.ts` | 🤖 Verify `compilerInitPromise` pattern prevents concurrent init | |
+| STA-12 | Low | Reconnection backoff | Exponential delay capped at MAX_RECONNECT_ATTEMPTS. User-initiated disconnect suppresses auto-reconnect. (See also REL-03) | `ble-manager.ts`, `types.ts` | Review reconnection logic and constant values | |
+| STA-13 | Medium | Lazy init single-flight | Compiler init uses a single promise to prevent duplicate WASM loading. (See also REL-06) | `compiler.ts` | 🤖 Verify `compilerInitPromise` pattern prevents concurrent init | |
 | STA-14 | Low | Pending manual save cleanup | `pendingManualSave` entries removed after timeout to prevent stale entries. | `extension.ts` | 🤖 Search for `pendingManualSave` and verify cleanup timer | |
 
 ## 3. Cross-Platform Compatibility (PLT)
@@ -149,12 +149,12 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 |----|----------|-------|---------|-----------|--------------|--------|
 | RDO-01 | Medium | Module decomposition | Single-responsibility modules. Entry point orchestrates; each module testable in isolation. No circular imports. | `src/` directory | 🤖 Analyze import graph; detect circular dependencies | |
 | RDO-02 | Low | Naming conventions | PascalCase: types/classes/interfaces. camelCase: variables/functions. UPPER_SNAKE_CASE: constants. `_` prefix: private/unused. | All `src/*.ts` | 🤖 Run ESLint `@typescript-eslint/naming-convention` rule | |
-| RDO-03 | Medium | TypeScript strict mode | `strict: true` in tsconfig.json. | `tsconfig.json` | 🤖 Verify `strict: true` flag | |
+| RDO-03 | Medium | TypeScript strict mode | `strict: true` in tsconfig.json. (See also TYP-01) | `tsconfig.json` | 🤖 Verify `strict: true` flag | |
 | RDO-04 | Low | ESLint rules | `curly`, `eqeqeq`, `prefer-const`, `no-throw-literal`, naming conventions, no-unused-vars. | `eslint.config.js` | Run `npm run lint` with zero warnings/errors | |
 | RDO-05 | Medium | JSDoc comments | All exported functions, classes, interfaces documented. Internal helpers have at least `@brief`. | All `src/*.ts` | 🤖 Grep for exported functions without JSDoc | |
-| RDO-06 | Low | SPDX headers | All `.ts` source files start with `SPDX-License-Identifier` and `SPDX-FileCopyrightText`. | All `src/*.ts` | 🤖 Grep for missing SPDX headers | |
-| RDO-07 | Low | Structured logging | All output channel messages prefixed with `[CATEGORY]` tags. Machine-parseable for AI agents. | `extension.ts`, `ui-manager.ts` | 🤖 Grep for log calls without `[TAG]` prefix | |
-| RDO-08 | Medium | Constants centralization | All timeouts, limits, UUIDs in `BLE_CONSTANTS`. No magic numbers in business logic. | All `src/*.ts` | 🤖 Grep for numeric literals used as timeouts or limits outside `types.ts` | |
+| RDO-06 | Low | SPDX headers | All `.ts` source files start with `SPDX-License-Identifier` and `SPDX-FileCopyrightText`. (See also LIC-02) | All `src/*.ts` | 🤖 Grep for missing SPDX headers | |
+| RDO-07 | Low | Structured logging | All output channel messages prefixed with `[CATEGORY]` tags. Machine-parseable for AI agents. (See also ERR-04) | `extension.ts`, `ui-manager.ts` | 🤖 Grep for log calls without `[TAG]` prefix | |
+| RDO-08 | Medium | Constants centralization | BLE constants (timeouts, UUIDs, limits) in `BLE_CONSTANTS`. Module-specific constants (e.g., `MAX_CONSOLE_BUFFER`, `MAX_REF_SIZE`) defined as named constants at module top. No magic numbers in business logic. | All `src/*.ts` | 🤖 Grep for numeric literals used as timeouts or limits not declared as named constants | |
 | RDO-09 | Low | Module size monitoring | Flag modules exceeding ~500 lines for potential splitting. | `src/ui-manager.ts` | 🤖 Count lines per module | |
 | RDO-10 | Low | Dead code | No unused imports, functions, or variables. Unused parameters prefixed with `_`. | All `src/*.ts` | 🤖 Run `npm run lint` | |
 | RDO-11 | Low | Consistent code style | Consistent formatting across all modules. No mixed styles. | All `src/*.ts` | 🤖 Run ESLint on entire codebase | |
@@ -345,4 +345,4 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 
 | Date | Version | Changes |
 |------|---------|---------|
-| 2025-04-15 | 1.0 | Initial checklist: 20 categories, 147 items |
+| 2026-04-15 | 1.0 | Initial checklist: 20 categories, 162 items |
