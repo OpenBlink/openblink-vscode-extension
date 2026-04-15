@@ -2,7 +2,7 @@
   "name": "openblink-extension",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "engines": {
     "vscode": "^1.96.0"
   },
