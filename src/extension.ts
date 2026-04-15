@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import * as l10n from '@vscode/l10n';
 import { BleManager } from './ble-manager';
-import { initCompiler, compile, parseDiagnostics } from './compiler';
+import { initCompiler as _initCompiler, compile, parseDiagnostics, setExtensionUri } from './compiler';
 import { sendFirmware, sendReset } from './protocol';
 import * as boardManager from './board-manager';
 import * as ui from './ui-manager';
@@ -16,8 +16,22 @@ import { BLE_CONSTANTS, MetricsData, SavedDevice } from './types';
 /** @brief globalState key for persisted saved-device list. */
 const SAVED_DEVICES_KEY = 'openblink.savedDevices';
 
-/** @brief Singleton BLE manager instance. */
-let bleManager: BleManager;
+/** @brief Singleton BLE manager instance. Lazily initialized. */
+let _bleManager: BleManager | null = null;
+
+/** @brief Get the BLE manager, initializing it lazily on first access. */
+function getBleManager(): BleManager {
+  if (!_bleManager) {
+    _bleManager = new BleManager();
+  }
+  return _bleManager;
+}
+
+/** @brief Accessor for the BLE manager instance. */
+function bleManager(): BleManager {
+  return getBleManager();
+}
+
 /** @brief Sidebar tree-view provider for BLE device scanning and selection. */
 let devicesProvider: ui.DevicesTreeProvider;
 /** @brief Sidebar tree-view provider for user actions. */
@@ -78,6 +92,10 @@ export function activate(context: vscode.ExtensionContext) {
   currentSourceFile = vscode.workspace.getConfiguration('openblink').get<string>('sourceFile') ?? 'app.rb';
   currentSlot = vscode.workspace.getConfiguration('openblink').get<number>('slot') ?? 2;
 
+  // Load boards
+  const _boards = boardManager.loadBoards(context.extensionUri);
+  const currentBoard = boardManager.getCurrentBoard();
+
   // Initialize TreeView providers (must be created before event listeners reference them)
   devicesProvider = new ui.DevicesTreeProvider();
   tasksProvider = new ui.TasksTreeProvider();
@@ -86,72 +104,114 @@ export function activate(context: vscode.ExtensionContext) {
   boardReferenceProvider = new ui.BoardReferenceTreeProvider();
   mcpStatusProvider = new ui.McpStatusTreeProvider();
 
-  // Initialize BLE manager
-  bleManager = new BleManager();
+  // Read performance settings
+  const config = vscode.workspace.getConfiguration('openblink');
+  const lazyInitEnabled = config.get<boolean>('performance.lazyInit', true);
+  const mcpDelay = config.get<number>('performance.mcpDelay', 1000);
+
+  // BLE manager will be initialized lazily when needed
+  // Register disposal for when extension is deactivated
   context.subscriptions.push({
-    dispose: () => bleManager.dispose()
+    dispose: () => {
+      if (_bleManager) {
+        _bleManager.dispose();
+      }
+    }
   });
 
-  bleManager.onConnectionStateChanged((state) => {
-    const reconnect = state === 'reconnecting' ? bleManager.reconnectInfo : undefined;
-    ui.updateStatusBar(state, bleManager.deviceName, undefined, currentSlot, reconnect);
-    tasksProvider.update({ connected: bleManager.isConnected });
-    deviceInfoProvider.update({
-      connected: bleManager.isConnected,
-      deviceName: bleManager.deviceName,
-      deviceId: bleManager.deviceId,
-      mtu: bleManager.negotiatedMTU,
+  // Helper function to register BLE event listeners
+  function registerBleEventListeners(): void {
+    getBleManager().onConnectionStateChanged((state) => {
+      const reconnect = state === 'reconnecting' ? getBleManager().reconnectInfo : undefined;
+      ui.updateStatusBar(state, getBleManager().deviceName, undefined, currentSlot, reconnect);
+      tasksProvider.update({ connected: getBleManager().isConnected });
+      deviceInfoProvider.update({
+        connected: getBleManager().isConnected,
+        deviceName: getBleManager().deviceName,
+        deviceId: getBleManager().deviceId,
+        mtu: getBleManager().negotiatedMTU,
+      });
+      devicesProvider.updateConnection(state, getBleManager().deviceId);
+
+      // Update MCP bridge with connection state
+      mcpBridge.updateConnectionStatus(
+        state,
+        getBleManager().deviceName,
+        getBleManager().deviceId,
+        getBleManager().negotiatedMTU,
+      );
+
+      // Auto-save device on successful connection
+      if (state === 'connected' && getBleManager().deviceId) {
+        const saved = context.globalState.get<SavedDevice[]>(SAVED_DEVICES_KEY, []);
+        if (!saved.some(d => d.id === getBleManager().deviceId)) {
+          const updated = [...saved, { name: getBleManager().deviceName, id: getBleManager().deviceId }];
+          void context.globalState.update(SAVED_DEVICES_KEY, updated);
+          devicesProvider.setSavedDevices(updated);
+        }
+      }
     });
-    devicesProvider.updateConnection(state, bleManager.deviceId);
 
-    // Update MCP bridge with connection state
-    mcpBridge.updateConnectionStatus(
-      state,
-      bleManager.deviceName,
-      bleManager.deviceId,
-      bleManager.negotiatedMTU,
-    );
+    getBleManager().onScanningStateChanged((isScanning) => {
+      devicesProvider.updateScanning(isScanning);
+    });
 
-    // Auto-save device on successful connection
-    if (state === 'connected' && bleManager.deviceId) {
-      const saved = context.globalState.get<SavedDevice[]>(SAVED_DEVICES_KEY, []);
-      if (!saved.some(d => d.id === bleManager.deviceId)) {
-        const updated = [...saved, { name: bleManager.deviceName, id: bleManager.deviceId }];
-        void context.globalState.update(SAVED_DEVICES_KEY, updated);
-        devicesProvider.setSavedDevices(updated);
+    getBleManager().onDeviceDiscovered((info) => {
+      devicesProvider.addDiscoveredDevice(info);
+    });
+
+    getBleManager().onConsoleOutput((message) => {
+      for (const line of message.split('\n')) {
+        // Strip carriage returns and control characters (except printable ASCII
+        // and common whitespace) to prevent terminal/prompt injection from
+        // malicious BLE devices.
+        const sanitized = line.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
+        if (sanitized.length > 0) {
+          ui.log(`[DEVICE] ${sanitized}`);
+          ui.appendConsoleLog(`[DEVICE] ${sanitized}`);
+        }
       }
+      mcpBridge.scheduleConsoleWrite();
+    });
+
+    getBleManager().onLog((message) => {
+      ui.log(message);
+    });
+  }
+
+  // Helper function to initialize MCP bridge
+  function initializeMcpBridge(delay: number): void {
+    mcpBridge.initialize(context);
+    
+    // Set initial MCP enabled state
+    mcpStatusProvider.update({ mcpEnabled: mcpBridge.isEnabled() });
+    
+    // Set up MCP write callbacks
+    mcpBridge.setWriteCallbacks({
+      onStatusWritten: () => mcpStatusProvider.update({ lastStatusWriteTime: new Date() }),
+      onConsoleWritten: () => mcpStatusProvider.update({ lastConsoleWriteTime: new Date() }),
+    });
+    
+    // Set initial board status for MCP
+    if (currentBoard) {
+      mcpBridge.updateBoardStatus({
+        name: currentBoard.name,
+        displayName: currentBoard.displayName,
+        referencePath: boardManager.getLocalizedReferencePath(currentBoard),
+      });
     }
-  });
+    
+    ui.log(`[MCP] Bridge initialized (delayed ${delay}ms).`);
+  }
 
-  bleManager.onScanningStateChanged((isScanning) => {
-    devicesProvider.updateScanning(isScanning);
-  });
-
-  bleManager.onDeviceDiscovered((info) => {
-    devicesProvider.addDiscoveredDevice(info);
-  });
-
-  bleManager.onConsoleOutput((message) => {
-    for (const line of message.split('\n')) {
-      // Strip carriage returns and control characters (except printable ASCII
-      // and common whitespace) to prevent terminal/prompt injection from
-      // malicious BLE devices.
-      const sanitized = line.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
-      if (sanitized.length > 0) {
-        ui.log(`[DEVICE] ${sanitized}`);
-        ui.appendConsoleLog(`[DEVICE] ${sanitized}`);
-      }
-    }
-    mcpBridge.scheduleConsoleWrite();
-  });
-
-  bleManager.onLog((message) => {
-    ui.log(message);
-  });
-
-  // Restore saved devices from globalState
-  const savedDevices = context.globalState.get<SavedDevice[]>(SAVED_DEVICES_KEY, []);
-  devicesProvider.setSavedDevices(savedDevices);
+  // Defer BLE event listener registration if lazy init is enabled
+  if (!lazyInitEnabled) {
+    // Register BLE event listeners immediately
+    registerBleEventListeners();
+  } else {
+    // Event listeners will be registered when BLE manager is first accessed
+    ui.log('[SYSTEM] BLE event listeners deferred (lazy initialization enabled).');
+  }
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('openblink-devices', devicesProvider),
@@ -168,9 +228,7 @@ export function activate(context: vscode.ExtensionContext) {
     { dispose: () => mcpStatusProvider.dispose() }
   );
 
-  // Load boards
-  const _boards = boardManager.loadBoards(context.extensionUri);
-  const currentBoard = boardManager.getCurrentBoard();
+  // Update tasks provider with current settings
   tasksProvider.update({
     sourceFile: currentSourceFile,
     boardName: currentBoard?.displayName ?? '',
@@ -184,10 +242,8 @@ export function activate(context: vscode.ExtensionContext) {
   // MCP Bridge (file-based IPC for AI agent integration)
   // ========================================================================
 
-  // Register MCP build trigger callback — invoked when the MCP server
-  // (or a Cascade Hook) writes a `trigger.json` file.
-  // NOTE: Must be registered BEFORE initialize() so that any existing
-  // trigger.json at startup is not consumed without being processed.
+  // MCP bridge will be initialized lazily when needed
+  // Register build trigger callback first (must be before initialize)
   mcpBridge.onBuildTrigger(async (filePath: string, requestId: string) => {
     ui.log(`[MCP] Build trigger received: ${filePath} (${requestId})`);
     mcpStatusProvider.update({ lastTriggerTime: new Date(), lastTriggerRequestId: requestId });
@@ -221,25 +277,19 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  mcpBridge.initialize(context);
-
-  // Set initial MCP enabled state immediately after initialize() reads the
-  // setting, before any debounced writes can fire.
-  mcpStatusProvider.update({ mcpEnabled: mcpBridge.isEnabled() });
-
-  // Set up MCP write callbacks to update the MCP status tree view
-  mcpBridge.setWriteCallbacks({
-    onStatusWritten: () => mcpStatusProvider.update({ lastStatusWriteTime: new Date() }),
-    onConsoleWritten: () => mcpStatusProvider.update({ lastConsoleWriteTime: new Date() }),
-  });
-
-  // Set initial board status for MCP
-  if (currentBoard) {
-    mcpBridge.updateBoardStatus({
-      name: currentBoard.name,
-      displayName: currentBoard.displayName,
-      referencePath: boardManager.getLocalizedReferencePath(currentBoard),
-    });
+  // Defer MCP bridge initialization until first use
+  // This prevents file system operations at startup
+  if (mcpDelay > 0) {
+    setTimeout(() => {
+      if (mcpBridge.shouldInitialize()) {
+        initializeMcpBridge(mcpDelay);
+      }
+    }, mcpDelay);
+  } else {
+    // Initialize immediately if delay is 0
+    if (mcpBridge.shouldInitialize()) {
+      initializeMcpBridge(0);
+    }
   }
 
   // Register MCP Server Definition Provider for VS Code Copilot auto-discovery.
@@ -295,14 +345,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // Initialize compiler
-  initCompiler(context.extensionUri).then(() => {
-    ui.log('[SYSTEM] mrbc WASM compiler initialized.');
-  }).catch((error: Error) => {
-    const msg = error.message ?? String(error);
-    ui.log(`[SYSTEM] Compiler initialization failed: ${msg}`);
-    vscode.window.showErrorMessage(l10n.t('Compiler initialization failed: {0}', msg));
-  });
+  // Set up compiler for lazy loading
+  setExtensionUri(context.extensionUri);
+  ui.log('[SYSTEM] mrbc WASM compiler will be loaded on first use.');
 
   // Auto build-and-blink when the user manually saves a .rb file that is
   // currently focused in the editor.  Ignores background saves (e.g.
@@ -350,7 +395,7 @@ export function activate(context: vscode.ExtensionContext) {
         const raw = vscode.workspace.getConfiguration('openblink').get<number>('slot');
         currentSlot = (raw === 1 || raw === 2) ? raw : 2;
         tasksProvider.update({ slot: currentSlot });
-        ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, undefined, currentSlot);
+        ui.updateStatusBar(bleManager().connectionState, bleManager().deviceName, undefined, currentSlot);
         mcpBridge.updateStatus({ slot: currentSlot });
       }
       if (e.affectsConfiguration('openblink.board')) {
@@ -387,7 +432,7 @@ export function activate(context: vscode.ExtensionContext) {
     // instead of showing a QuickPick.
     vscode.commands.registerCommand('openblink.connectDevice', async () => {
       try {
-        await bleManager.startScan();
+        await bleManager().startScan();
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(msg);
@@ -397,7 +442,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Start scanning for OpenBlink devices (Devices view title-bar button).
     vscode.commands.registerCommand('openblink.scanDevices', async () => {
       try {
-        await bleManager.startScan();
+        await bleManager().startScan();
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(msg);
@@ -406,7 +451,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Stop an active BLE scan (Devices view title-bar button).
     vscode.commands.registerCommand('openblink.stopScan', async () => {
-      await bleManager.stopScan();
+      await bleManager().stopScan();
     }),
 
     // Connect to a device that was found during the current scan.
@@ -415,13 +460,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(l10n.t('Invalid device ID'));
         return;
       }
-      try {
-        devicesProvider.updateConnection('connecting', deviceId);
-        await bleManager.connectById(deviceId);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(msg);
-      }
+      devicesProvider.updateConnection('connecting', deviceId);
+      await bleManager().connectById(deviceId);
     }),
 
     // Connect to a previously saved device.  If the device is not in the
@@ -432,10 +472,10 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(l10n.t('Invalid device ID'));
         return;
       }
-      if (!bleManager.discoveredDevices.has(deviceId)) {
+      if (!bleManager().discoveredDevices.has(deviceId)) {
         try {
           ui.log(`[BLE] ${l10n.t('Scanning to find saved device...')}`);
-          await bleManager.startScan();
+          await bleManager().startScan();
           // Wait for the device to appear or the scan to end, with an explicit timeout
           // to prevent the interval from leaking if scanning never completes.
           await new Promise<void>((resolve) => {
@@ -445,7 +485,7 @@ export function activate(context: vscode.ExtensionContext) {
               resolve();
             }, timeoutMs);
             const checkInterval = setInterval(() => {
-              if (bleManager.discoveredDevices.has(deviceId) || !bleManager.isScanning) {
+              if (bleManager().discoveredDevices.has(deviceId) || !bleManager().isScanning) {
                 clearInterval(checkInterval);
                 clearTimeout(deadline);
                 resolve();
@@ -458,13 +498,8 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
       }
-      try {
-        devicesProvider.updateConnection('connecting', deviceId);
-        await bleManager.connectById(deviceId);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(msg);
-      }
+      devicesProvider.updateConnection('connecting', deviceId);
+      await bleManager().connectById(deviceId);
     }),
 
     // Remove a saved device from globalState (context-menu trash icon).
@@ -478,7 +513,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('openblink.disconnectDevice', async () => {
-      await bleManager.disconnect();
+      await bleManager().disconnect();
     }),
 
     vscode.commands.registerCommand('openblink.buildAndBlink', async () => {
@@ -501,8 +536,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('openblink.softReset', async () => {
-      const programChar = bleManager.getProgramCharacteristic();
-      if (!bleManager.isConnected || !programChar) {
+      const programChar = bleManager().getProgramCharacteristic();
+      if (!bleManager().isConnected || !programChar) {
         vscode.window.showErrorMessage(l10n.t('Device is not connected'));
         return;
       }
@@ -563,7 +598,7 @@ export function activate(context: vscode.ExtensionContext) {
         currentSlot = selected.slot;
         await vscode.workspace.getConfiguration('openblink').update('slot', currentSlot, vscode.ConfigurationTarget.Global);
         tasksProvider.update({ slot: currentSlot });
-        ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, undefined, currentSlot);
+        ui.updateStatusBar(bleManager().connectionState, bleManager().deviceName, undefined, currentSlot);
         vscode.window.showInformationMessage(l10n.t('Slot set to: {0}', String(currentSlot)));
         ui.log(`[SYSTEM] ${l10n.t('Slot set to: {0}', String(currentSlot))}`);
       }
@@ -627,7 +662,7 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
   // Compile
   ui.clearDiagnostics(sourceUri);
   const compileErrors: string[] = [];
-  const result = compile(rubyCode, undefined, (err) => compileErrors.push(err));
+  const result = await compile(rubyCode, undefined, (err) => compileErrors.push(err));
 
   if (!result.success) {
     ui.log(`[COMPILE] error: ${result.error}`);
@@ -643,14 +678,14 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
   ui.log(`[COMPILE] success: ${result.compileTime.toFixed(1)}ms, size: ${result.size} bytes`);
 
   // Transfer via BLE
-  const programChar = bleManager.getProgramCharacteristic();
-  if (!bleManager.isConnected || !programChar || !result.bytecode) {
+  const programChar = bleManager().getProgramCharacteristic();
+  if (!bleManager().isConnected || !programChar || !result.bytecode) {
     vscode.window.showWarningMessage(l10n.t('Device is not connected'));
 
     const metrics: MetricsData = { compileTime: result.compileTime, programSize: result.size };
     ui.recordMetrics(metrics);
     metricsProvider.updateMetrics(metrics);
-    ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, metrics, currentSlot);
+    ui.updateStatusBar(bleManager().connectionState, bleManager().deviceName, metrics, currentSlot);
     const history = ui.getMetricsHistory();
     mcpBridge.updateMetricsStatus(metrics, {
       compile: ui.calculateStats(history.compile),
@@ -663,7 +698,7 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
 
   const transferStart = performance.now();
   try {
-    await sendFirmware(programChar, result.bytecode, currentSlot, bleManager.negotiatedMTU, (msg) => ui.log(msg));
+    await sendFirmware(programChar, result.bytecode, currentSlot, bleManager().negotiatedMTU, (msg) => ui.log(msg));
     const transferTime = performance.now() - transferStart;
 
     const metrics: MetricsData = {
@@ -673,7 +708,7 @@ async function buildAndBlinkInner(context: vscode.ExtensionContext, sourceUri: v
     };
     ui.recordMetrics(metrics);
     metricsProvider.updateMetrics(metrics);
-    ui.updateStatusBar('connected', bleManager.deviceName, metrics, currentSlot);
+    ui.updateStatusBar('connected', bleManager().deviceName, metrics, currentSlot);
     const history = ui.getMetricsHistory();
     mcpBridge.updateMetricsStatus(metrics, {
       compile: ui.calculateStats(history.compile),
