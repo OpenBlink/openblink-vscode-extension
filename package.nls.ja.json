@@ -21,5 +21,7 @@
   "view.boardReference": "ボードリファレンス",
   "command.setupMcp": "MCP サーバーをセットアップ",
   "config.mcp.enabled": "MCP (Model Context Protocol) とうごうを ON にする — AI エージェントが Build & Blink、デバイスじょうほう、コンソール出力、メトリクス、ボードリファレンスにアクセスできるようにする",
-  "view.mcpStatus": "MCP ステータス"
+  "view.mcpStatus": "MCP ステータス",
+  "config.performance.lazyInit": "遅延初期化を有効にして起動を高速化します。コンポーネントは最初に使用されるときに読み込まれます。",
+  "config.performance.mcpDelay": "MCP ブリッジを初期化するまでの遅延時間（ミリ秒）。0 に設定すると遅延初期化を無効にします。"
 }

@@ -137,6 +137,18 @@
           "type": "boolean",
           "default": true,
           "description": "%config.mcp.enabled%"
+        },
+        "openblink.performance.lazyInit": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.performance.lazyInit%"
+        },
+        "openblink.performance.mcpDelay": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "%config.performance.mcpDelay%"
         }
       }
     },

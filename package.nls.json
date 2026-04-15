@@ -21,5 +21,7 @@
   "view.boardReference": "Board Reference",
   "command.setupMcp": "Setup MCP Server",
   "config.mcp.enabled": "Enable MCP (Model Context Protocol) integration for AI agent access to Build & Blink, device info, console output, metrics, and board reference",
-  "view.mcpStatus": "MCP Status"
+  "view.mcpStatus": "MCP Status",
+  "config.performance.lazyInit": "Enable lazy initialization for faster startup. Components will be loaded when first used.",
+  "config.performance.mcpDelay": "Delay in milliseconds before initializing MCP bridge. Set to 0 to disable deferred initialization."
 }
