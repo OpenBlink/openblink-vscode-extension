@@ -186,11 +186,14 @@ export function activate(context: vscode.ExtensionContext) {
   // ========================================================================
 
   // Register MCP build trigger callback — invoked when the MCP server
-  // (or a Cascade Hook) writes a `trigger.json` file.
+  // writes a `trigger.json` file.
   // NOTE: Must be registered BEFORE initialize() so that any existing
   // trigger.json at startup is not consumed without being processed.
   mcpBridge.onBuildTrigger(async (filePath: string, requestId: string) => {
-    ui.log(`[MCP] Build trigger received: ${filePath} (${requestId})`);
+    const startTime = Date.now();
+    const summary = path.basename(filePath);
+    ui.log(`[MCP] build_and_blink received: ${summary} (${requestId})`);
+    mcpStatusProvider.addHistoryEntry({ tool: 'build_and_blink', requestId, summary });
     mcpStatusProvider.update({ lastTriggerTime: new Date(), lastTriggerRequestId: requestId });
 
     // Mark build as started
@@ -199,6 +202,7 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const sourceUri = vscode.Uri.file(filePath);
       const buildResult = await buildAndBlink(context, sourceUri, { silent: true, requestId });
+      const durationMs = Date.now() - startTime;
 
       // Write build result for MCP server to consume
       const history = ui.getMetricsHistory();
@@ -222,19 +226,39 @@ export function activate(context: vscode.ExtensionContext) {
         lastResultError: buildResult.error,
       });
 
+      // Record outcome in the history view and log
+      const detail = buildResult.success
+        ? [
+            lastCompile !== undefined ? `compile ${lastCompile.toFixed(1)}ms` : undefined,
+            lastTransfer !== undefined ? `transfer ${lastTransfer.toFixed(1)}ms` : undefined,
+            lastSize !== undefined ? `size ${lastSize}B` : undefined,
+          ].filter(Boolean).join(', ')
+        : buildResult.error;
+      mcpStatusProvider.updateHistoryEntry(requestId, {
+        status: buildResult.success ? 'success' : 'failed',
+        detail: detail || undefined,
+        durationMs,
+      });
+      ui.log(`[MCP] build_and_blink ${buildResult.success ? 'completed' : 'failed'} in ${durationMs}ms${detail ? ` (${detail})` : ''}`);
+
       // Mark build as completed
       mcpBridge.markBuildCompleted(requestId, buildResult.success);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      const durationMs = Date.now() - startTime;
       mcpBridge.writeBuildResult({ requestId, success: false, error: msg });
       mcpStatusProvider.update({ lastResultTime: new Date(), lastResultSuccess: false, lastResultError: msg });
       mcpBridge.markBuildCompleted(requestId, false);
+      mcpStatusProvider.updateHistoryEntry(requestId, { status: 'failed', detail: msg, durationMs });
+      ui.log(`[MCP] build_and_blink threw in ${durationMs}ms: ${msg}`);
     }
   });
 
   // Register MCP command callback — invoked when the MCP server writes a `command.json` file.
   mcpBridge.onCommand(async (command) => {
-    ui.log(`[MCP] Command received: ${command.type} (${command.requestId})`);
+    const summary = summarizeMcpCommand(command);
+    ui.log(`[MCP] ${command.type} received${summary ? ` (${summary})` : ''} (${command.requestId})`);
+    mcpStatusProvider.addHistoryEntry({ tool: command.type, requestId: command.requestId, summary });
 
     switch (command.type) {
       case 'scan':
@@ -255,8 +279,14 @@ export function activate(context: vscode.ExtensionContext) {
       case 'validate':
         await handleMcpValidateCommand(command);
         break;
-      default:
-        ui.log(`[MCP] Unknown command type: ${(command as { type: string }).type}`);
+      default: {
+        const unknownType = (command as { type: string }).type;
+        ui.log(`[MCP] Unknown command type: ${unknownType}`);
+        mcpStatusProvider.updateHistoryEntry(command.requestId, {
+          status: 'failed',
+          detail: `Unknown command type: ${unknownType}`,
+        });
+      }
     }
   });
 
@@ -286,18 +316,19 @@ export function activate(context: vscode.ExtensionContext) {
   // without any manual configuration in mcp.json.
   if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
     const mcpServerModule = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
 
     context.subscriptions.push(
       vscode.lm.registerMcpServerDefinitionProvider('openblink.mcpServer', {
         provideMcpServerDefinitions: async () => {
           if (!mcpBridge.isEnabled()) { return []; }
+          const ipcDir = mcpBridge.resolveIpcDir(context);
+          if (!ipcDir) { return []; }
           return [
             new vscode.McpStdioServerDefinition(
               'OpenBlink',
               'node',
               [mcpServerModule],
-              { OPENBLINK_WORKSPACE: workspaceRoot, OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath },
+              { OPENBLINK_IPC_DIR: ipcDir, OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath },
               extensionVersion,
             ),
           ];
@@ -307,30 +338,53 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  // Register setupMcp command — generates MCP configuration for Windsurf/Cursor/Cline
+  // Clear the MCP command history (triggered by the view title-bar button).
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openblink.clearMcpHistory', () => {
+      mcpStatusProvider.clearHistory();
+      ui.log('[MCP] History cleared');
+    }),
+  );
+
+  // Register setupMcp command — offers installation to .vscode/mcp.json (VS Code 1.106+)
+  // or generation of a JSON snippet for Windsurf/Cursor/Cline.
   context.subscriptions.push(
     vscode.commands.registerCommand('openblink.setupMcp', async () => {
-      const mcpServerPath = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
-      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+      const ipcDir = mcpBridge.resolveIpcDir(context);
+      if (!ipcDir) {
+        vscode.window.showErrorMessage(
+          l10n.t('Cannot generate MCP configuration: no workspace is open. Please open a folder first.'),
+        );
+        return;
+      }
 
-      const configSnippet = JSON.stringify({
-        mcpServers: {
-          openblink: {
-            command: 'node',
-            args: [mcpServerPath],
-            env: { OPENBLINK_WORKSPACE: workspaceRoot, OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath },
-          },
-        },
-      }, null, 2);
-
-      const doc = await vscode.workspace.openTextDocument({
-        content: configSnippet,
-        language: 'json',
+      const workspaceChoice = {
+        label: l10n.t('Install to workspace (.vscode/mcp.json)'),
+        description: l10n.t('For VS Code Copilot (workspace-local)'),
+        choice: 'workspace' as const,
+      };
+      const globalChoice = {
+        label: l10n.t('Show JSON snippet'),
+        description: l10n.t('For Windsurf Cascade / Cursor / Cline (copy to your IDE config)'),
+        choice: 'snippet' as const,
+      };
+      const picked = await vscode.window.showQuickPick([workspaceChoice, globalChoice], {
+        placeHolder: l10n.t('How would you like to set up the MCP server?'),
       });
-      await vscode.window.showTextDocument(doc);
-      vscode.window.showInformationMessage(
-        l10n.t('Copy this MCP server configuration to your IDE\'s MCP config file.'),
-      );
+      if (!picked) { return; }
+
+      if (picked.choice === 'workspace') {
+        await installMcpToWorkspace(context);
+      } else {
+        await showMcpConfigSnippet(context, ipcDir);
+      }
+    }),
+  );
+
+  // Register installMcpWorkspace command — directly writes to .vscode/mcp.json.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openblink.installMcpWorkspace', async () => {
+      await installMcpToWorkspace(context);
     }),
   );
 
@@ -821,14 +875,234 @@ async function buildAndBlinkInner(
 export function deactivate() {}
 
 // ============================================================================
+// MCP Configuration Helpers
+// ============================================================================
+
+/**
+ * @brief Build the OpenBlink MCP server entry for `.vscode/mcp.json`.
+ *
+ * Uses the VS Code 1.106+ workspace `.vscode/mcp.json` schema, which keys
+ * servers under the top-level `servers` property (distinct from the legacy
+ * `mcpServers` key used by Windsurf/Cursor/Cline).
+ *
+ * @param context  The extension context supplying paths.
+ * @param ipcDir   Absolute path to the IPC directory to inject.
+ */
+function buildMcpServerEntry(context: vscode.ExtensionContext, ipcDir: string): {
+  type: 'stdio';
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+} {
+  const mcpServerPath = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
+  return {
+    type: 'stdio',
+    command: 'node',
+    args: [mcpServerPath],
+    env: {
+      OPENBLINK_IPC_DIR: ipcDir,
+      OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath,
+    },
+  };
+}
+
+/**
+ * @brief Install the OpenBlink MCP server into `.vscode/mcp.json`.
+ *
+ * Creates the file if it does not exist. If it already contains other
+ * servers, they are preserved; only the `openblink` entry is added or
+ * overwritten. This mirrors the behaviour VS Code 1.106+ expects for
+ * workspace-level MCP configuration.
+ *
+ * @param context  The extension context.
+ */
+async function installMcpToWorkspace(context: vscode.ExtensionContext): Promise<void> {
+  const ipcDir = mcpBridge.resolveIpcDir(context);
+  if (!ipcDir) {
+    vscode.window.showErrorMessage(
+      l10n.t('Cannot generate MCP configuration: no workspace is open. Please open a folder first.'),
+    );
+    return;
+  }
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage(
+      l10n.t('Cannot generate MCP configuration: no workspace is open. Please open a folder first.'),
+    );
+    return;
+  }
+
+  const mcpConfigUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'mcp.json');
+  const newEntry = buildMcpServerEntry(context, ipcDir);
+
+  // Try to read the existing mcp.json to preserve other server entries.
+  // Uses a permissive shape (Record<string, unknown>) because the file is
+  // user-editable and may contain arbitrary fields we do not own.
+  let existingConfig: Record<string, unknown> = {};
+  let existed = false;
+  try {
+    const raw = await vscode.workspace.fs.readFile(mcpConfigUri);
+    existed = true;
+    const parsed = JSON.parse(new TextDecoder().decode(raw));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      existingConfig = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // File does not exist or is unparseable — treat as empty.
+  }
+
+  // If the file exists and already has an openblink entry, confirm overwrite
+  // to avoid silently clobbering user-customised settings.
+  const existingServers = existingConfig.servers;
+  const hasExisting = existed
+    && existingServers
+    && typeof existingServers === 'object'
+    && !Array.isArray(existingServers)
+    && (existingServers as Record<string, unknown>)['openblink'] !== undefined;
+
+  if (hasExisting) {
+    const overwrite = l10n.t('Overwrite');
+    const cancel = l10n.t('Cancel');
+    const choice = await vscode.window.showWarningMessage(
+      l10n.t('The \'openblink\' entry already exists in .vscode/mcp.json. Overwrite?'),
+      { modal: true },
+      overwrite,
+      cancel,
+    );
+    if (choice !== overwrite) { return; }
+  }
+
+  // Merge: preserve other servers, overwrite/add openblink.
+  const mergedServers: Record<string, unknown> = (existingServers && typeof existingServers === 'object' && !Array.isArray(existingServers))
+    ? { ...(existingServers as Record<string, unknown>) }
+    : {};
+  mergedServers['openblink'] = newEntry;
+
+  const merged: Record<string, unknown> = { ...existingConfig, servers: mergedServers };
+  const content = JSON.stringify(merged, null, 2) + '\n';
+
+  try {
+    // Ensure the .vscode directory exists before writing.
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.vscode'));
+    await vscode.workspace.fs.writeFile(mcpConfigUri, new TextEncoder().encode(content));
+    ui.log(`[MCP] Wrote workspace configuration to ${mcpConfigUri.fsPath}`);
+    vscode.window.showInformationMessage(
+      l10n.t('OpenBlink MCP server installed to .vscode/mcp.json'),
+    );
+    // Open the file so the user can verify the result.
+    const doc = await vscode.workspace.openTextDocument(mcpConfigUri);
+    await vscode.window.showTextDocument(doc);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ui.log(`[MCP] Failed to write workspace configuration: ${msg}`);
+    vscode.window.showErrorMessage(
+      l10n.t('Failed to write .vscode/mcp.json: {0}', msg),
+    );
+  }
+}
+
+/**
+ * @brief Show a JSON snippet for non-VS Code IDEs (Windsurf/Cursor/Cline).
+ *
+ * Writes the `mcpServers`-style configuration into a new unsaved editor
+ * document so the user can copy it into their IDE's MCP config file.
+ *
+ * @param context  The extension context.
+ * @param ipcDir   Absolute IPC directory path.
+ */
+async function showMcpConfigSnippet(context: vscode.ExtensionContext, ipcDir: string): Promise<void> {
+  const entry = buildMcpServerEntry(context, ipcDir);
+  // The snippet uses the legacy `mcpServers` key expected by Windsurf,
+  // Cursor, and Cline.  The `type` field is omitted here because these
+  // IDEs default to stdio transport.
+  const { type: _type, ...entryWithoutType } = entry;
+  void _type;
+  const configSnippet = JSON.stringify({
+    mcpServers: { openblink: entryWithoutType },
+  }, null, 2);
+
+  const doc = await vscode.workspace.openTextDocument({
+    content: configSnippet,
+    language: 'json',
+  });
+  await vscode.window.showTextDocument(doc);
+  vscode.window.showInformationMessage(
+    l10n.t('Copy this MCP server configuration to your IDE\'s MCP config file.'),
+  );
+}
+
+// ============================================================================
 // MCP Command Handlers
 // ============================================================================
+
+/**
+ * @brief Build a short human-readable summary of an MCP command's parameters.
+ *
+ * Used both for the output-channel log prefix and for the `summary` field
+ * of the history entry shown in the MCP Status tree view.  Keep the
+ * summary short (ideally <40 chars) so it fits comfortably in the tree
+ * description column.
+ */
+function summarizeMcpCommand(command: mcpBridge.McpCommand): string {
+  switch (command.type) {
+    case 'scan':
+      return command.timeout !== undefined ? `timeout=${command.timeout}ms` : '';
+    case 'connect':
+      return command.deviceId ? `deviceId=${command.deviceId}` : '';
+    case 'disconnect':
+      return command.force ? 'force' : '';
+    case 'reset':
+      return command.slot !== undefined ? `slot=${command.slot}` : '';
+    case 'cancel':
+      return command.targetRequestId ? `target=${command.targetRequestId}` : '';
+    case 'validate':
+      if (command.code) { return 'inline code'; }
+      return command.file ?? '';
+    default:
+      return '';
+  }
+}
+
+/**
+ * @brief Publish an MCP command result to the bridge, history view, and log.
+ *
+ * Centralises the three side-effects that every command handler performs
+ * upon completion:
+ *   1. Atomic `command-result.json` write (via the bridge).
+ *   2. Update of the MCP Status tree view's history entry.
+ *   3. Single `[MCP]` line in the output channel.
+ *
+ * @param toolName   Name of the tool as shown in the UI (matches the MCP
+ *                   tool name, e.g. `scan`, `connect_device`).
+ * @param result     The command outcome to write.
+ * @param startTime  `Date.now()` captured when the command was received.
+ * @param detail     Optional success detail (e.g. device list summary).
+ */
+function reportMcpCommandResult(
+  toolName: string,
+  result: mcpBridge.McpCommandResult,
+  startTime: number,
+  detail?: string,
+): void {
+  const durationMs = Date.now() - startTime;
+  mcpBridge.writeCommandResult(result);
+  mcpStatusProvider.updateHistoryEntry(result.requestId, {
+    status: result.success ? 'success' : 'failed',
+    detail: result.success ? detail : (result.error ?? detail),
+    durationMs,
+  });
+  const extra = result.success
+    ? (detail ? ` (${detail})` : '')
+    : (result.error ? ` (${result.error})` : '');
+  ui.log(`[MCP] ${toolName} ${result.success ? 'completed' : 'failed'} in ${durationMs}ms${extra}`);
+}
 
 /**
  * @brief Handle MCP scan command.
  */
 async function handleMcpScanCommand(command: { requestId: string; timeout?: number }): Promise<void> {
-  ui.log(`[MCP] Scanning for devices (${command.requestId})`);
+  const startTime = Date.now();
 
   try {
     // Start scan (BleManager also sets its own auto-stop timer)
@@ -858,20 +1132,18 @@ async function handleMcpScanCommand(command: { requestId: string; timeout?: numb
       devices.push({ id, name: info.name, rssi: undefined });
     }
 
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('scan', {
       requestId: command.requestId,
       success: true,
       devices,
-    });
-    ui.log(`[MCP] Scan complete: ${devices.length} device(s) found`);
+    }, startTime, `${devices.length} device(s)`);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    ui.log(`[MCP] Scan failed: ${msg}`);
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('scan', {
       requestId: command.requestId,
       success: false,
       error: msg,
-    });
+    }, startTime);
   }
 }
 
@@ -879,35 +1151,32 @@ async function handleMcpScanCommand(command: { requestId: string; timeout?: numb
  * @brief Handle MCP connect command.
  */
 async function handleMcpConnectCommand(command: { requestId: string; deviceId?: string; timeout?: number }): Promise<void> {
+  const startTime = Date.now();
   if (!command.deviceId) {
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('connect', {
       requestId: command.requestId,
       success: false,
       error: 'deviceId is required',
-    });
+    }, startTime);
     return;
   }
-
-  ui.log(`[MCP] Connecting to device ${command.deviceId} (${command.requestId})`);
 
   try {
     await bleManager.connectById(command.deviceId);
 
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('connect', {
       requestId: command.requestId,
       success: true,
       deviceName: bleManager.deviceName ?? undefined,
       mtu: bleManager.negotiatedMTU,
-    });
-    ui.log(`[MCP] Connected to ${bleManager.deviceName ?? command.deviceId}`);
+    }, startTime, `${bleManager.deviceName ?? command.deviceId}, MTU=${bleManager.negotiatedMTU}`);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    ui.log(`[MCP] Connection failed: ${msg}`);
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('connect', {
       requestId: command.requestId,
       success: false,
       error: msg,
-    });
+    }, startTime);
   }
 }
 
@@ -915,24 +1184,22 @@ async function handleMcpConnectCommand(command: { requestId: string; deviceId?: 
  * @brief Handle MCP disconnect command.
  */
 async function handleMcpDisconnectCommand(command: { requestId: string }): Promise<void> {
-  ui.log(`[MCP] Disconnecting device (${command.requestId})`);
+  const startTime = Date.now();
 
   try {
     await bleManager.disconnect();
 
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('disconnect', {
       requestId: command.requestId,
       success: true,
-    });
-    ui.log('[MCP] Disconnected');
+    }, startTime);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    ui.log(`[MCP] Disconnect failed: ${msg}`);
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('disconnect', {
       requestId: command.requestId,
       success: false,
       error: msg,
-    });
+    }, startTime);
   }
 }
 
@@ -940,17 +1207,15 @@ async function handleMcpDisconnectCommand(command: { requestId: string }): Promi
  * @brief Handle MCP reset command.
  */
 async function handleMcpResetCommand(command: { requestId: string; slot?: number }): Promise<void> {
-  ui.log(`[MCP] Executing soft reset (${command.requestId})`);
+  const startTime = Date.now();
 
   const programChar = bleManager.getProgramCharacteristic();
   if (!bleManager.isConnected || !programChar) {
-    const msg = 'Device is not connected';
-    ui.log(`[MCP] Reset failed: ${msg}`);
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('reset', {
       requestId: command.requestId,
       success: false,
-      error: msg,
-    });
+      error: 'Device is not connected',
+    }, startTime);
     return;
   }
 
@@ -958,40 +1223,40 @@ async function handleMcpResetCommand(command: { requestId: string; slot?: number
     const resetSlot = command.slot ?? currentSlot;
     await sendReset(programChar, (msg) => ui.log(msg), resetSlot);
 
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('reset', {
       requestId: command.requestId,
       success: true,
-    });
-    ui.log(`[MCP] Soft reset executed on slot ${resetSlot}`);
+    }, startTime, `slot ${resetSlot}`);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    ui.log(`[MCP] Reset failed: ${msg}`);
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('reset', {
       requestId: command.requestId,
       success: false,
       error: msg,
-    });
+    }, startTime);
   }
 }
 
 /**
  * @brief Handle MCP cancel command.
+ *
+ * The actual cancellation is performed inside the MCP server (which
+ * keeps the authoritative `activeOperations` set).  The extension-side
+ * handler just acknowledges the request so the server can complete.
  */
 async function handleMcpCancelCommand(command: { requestId: string; targetRequestId?: string }): Promise<void> {
-  ui.log(`[MCP] Cancelling operation ${command.targetRequestId ?? 'current'} (${command.requestId})`);
-
-  // Cancel is handled by the MCP server itself, we just acknowledge
-  mcpBridge.writeCommandResult({
+  const startTime = Date.now();
+  reportMcpCommandResult('cancel', {
     requestId: command.requestId,
     success: true,
-  });
+  }, startTime, command.targetRequestId ? `target=${command.targetRequestId}` : 'current');
 }
 
 /**
  * @brief Handle MCP validate command.
  */
 async function handleMcpValidateCommand(command: { requestId: string; file?: string; code?: string }): Promise<void> {
-  ui.log(`[MCP] Validating Ruby code (${command.requestId})`);
+  const startTime = Date.now();
 
   try {
     let rubyCode: string;
@@ -1028,26 +1293,23 @@ async function handleMcpValidateCommand(command: { requestId: string; file?: str
     const result = compile(rubyCode, undefined, (err) => compileErrors.push(err));
 
     if (result.success) {
-      mcpBridge.writeCommandResult({
+      reportMcpCommandResult('validate', {
         requestId: command.requestId,
         success: true,
-      });
-      ui.log('[MCP] Validation passed');
+      }, startTime, 'syntax OK');
     } else {
-      mcpBridge.writeCommandResult({
+      reportMcpCommandResult('validate', {
         requestId: command.requestId,
         success: false,
         error: result.error ?? 'Syntax validation failed',
-      });
-      ui.log(`[MCP] Validation failed: ${result.error ?? 'Unknown error'}`);
+      }, startTime);
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    ui.log(`[MCP] Validation error: ${msg}`);
-    mcpBridge.writeCommandResult({
+    reportMcpCommandResult('validate', {
       requestId: command.requestId,
       success: false,
       error: msg,
-    });
+    }, startTime);
   }
 }

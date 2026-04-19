@@ -20,6 +20,8 @@
   "view.metrics": "指标",
   "view.boardReference": "开发板参考",
   "command.setupMcp": "设置 MCP 服务器",
+  "command.installMcpWorkspace": "将 MCP 服务器安装到工作区",
+  "command.clearMcpHistory": "清除 MCP 历史记录",
   "config.mcp.enabled": "启用 MCP (Model Context Protocol) 集成，允许 AI 代理访问 Build & Blink、设备信息、控制台输出、指标和开发板参考",
   "view.mcpStatus": "MCP 状态",
   "config.ble.writeTimeout": "BLE 特性写入超时时间（毫秒，1000-60000）",

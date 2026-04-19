@@ -20,6 +20,8 @@
   "view.metrics": "メトリクス",
   "view.boardReference": "ボードリファレンス",
   "command.setupMcp": "MCP サーバーをセットアップ",
+  "command.installMcpWorkspace": "MCP サーバーをワークスペースにインストール",
+  "command.clearMcpHistory": "🧹 MCP りれきをけす",
   "config.mcp.enabled": "MCP (AI れんけい) を ON にする — AI が Build & Blink、デバイスじょうほう、コンソール出力、メトリクス、ボードリファレンスをつかえるようにする",
   "view.mcpStatus": "MCP ステータス",
   "config.ble.writeTimeout": "BLE かきこみタイムアウト (ミリびょう、1000-60000)",

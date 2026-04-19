@@ -8,19 +8,41 @@
  *
  * The extension (running inside the extension host process) and the MCP server
  * (running as a separate stdio-based Node.js process) communicate through JSON
- * files stored in the `.openblink/` directory at the workspace root:
+ * files stored in the `ipc/` subdirectory of the extension's workspaceStorage
+ * (`context.storageUri`). The absolute path is passed to the MCP server via the
+ * `OPENBLINK_IPC_DIR` environment variable so the two processes share the same
+ * directory without polluting the user's workspace tree.
  *
- *   - `status.json`  — Written by the extension (debounced 1 s) on connection
+ *   - `status.json`  — Written by the extension (throttled) on connection
  *                       state changes and build completions.
- *   - `openblink-console.log` — Written by the extension (debounced 2 s) with
+ *   - `openblink-console.log` — Written by the extension (throttled) with
  *                       the most recent device console output (up to 100 lines).
+ *   - `build-status.json` — Written by the extension on build lifecycle changes.
+ *   - `build-diagnostics.json` — Written by the extension after each build.
  *   - `trigger.json` — Written by the MCP server to request a Build & Blink.
  *   - `result.json`  — Written by the extension after a triggered build
  *                       completes so the MCP server can return the outcome.
+ *   - `command.json` / `command-result.json` — MCP server ↔ extension
+ *                       commands (scan, connect, disconnect, reset, validate, cancel).
  *
  * All write operations are guarded by the `openblink.mcp.enabled` setting.
- * When the setting is `false`, no files are written and the FileSystemWatcher
- * for `trigger.json` is disposed.
+ * When the setting is `false`, no files are written and the watchers for
+ * `trigger.json` / `command.json` are disposed.
+ *
+ * Design notes:
+ *   1. **Atomic writes**: all writes go through a temp file + `rename` so that
+ *      the MCP server never reads a partially-written JSON file.
+ *   2. **Throttling (not debouncing)**: the previous implementation used pure
+ *      debounce for console output, which meant that a chatty device that
+ *      prints logs faster than the debounce interval would *never* flush the
+ *      buffer (every new log reset the timer).  The throttler below guarantees
+ *      at-least-once flushing per interval even under a steady event stream.
+ *   3. **Fallback watchers**: VS Code's `FileSystemWatcher` occasionally fails
+ *      to notice writes to paths outside the workspace (e.g. workspaceStorage).
+ *      We therefore pair each VS Code watcher with a Node `fs.watch` so that
+ *      at least one of them delivers the event.
+ *   4. **Error logging**: previously all I/O errors were silently swallowed.
+ *      They are now logged to the `[MCP]` output channel for diagnosis.
  */
 
 import * as fs from 'fs';
@@ -115,22 +137,254 @@ export interface McpBuildStatus {
 // Directory & File Paths
 // ============================================================================
 
-/** @brief Name of the IPC directory created at the workspace root. */
-const IPC_DIR = '.openblink';
+/** @brief Name of the IPC subdirectory created inside the extension workspaceStorage. */
+const IPC_DIR = 'ipc';
 
-/** @brief Resolve the absolute path to the IPC directory for the first workspace folder. */
+/**
+ * @brief Absolute path to the IPC directory, resolved during {@link initialize}.
+ *
+ * Computed as `<context.storageUri.fsPath>/ipc`.  When VS Code is launched
+ * without a workspace, `context.storageUri` is `undefined` and this stays
+ * `undefined`, which disables all IPC file operations.
+ */
+let ipcDirPath: string | undefined;
+
+/** @brief Resolve the absolute path to the IPC directory. */
 function ipcDir(): string | undefined {
-  const ws = vscode.workspace.workspaceFolders?.[0];
-  return ws ? path.join(ws.uri.fsPath, IPC_DIR) : undefined;
+  return ipcDirPath;
 }
 
-/** @brief Ensure the `.openblink/` directory exists. */
+/** @brief Ensure the IPC directory exists (sync; called from hot paths). */
 function ensureDir(): string | undefined {
   const dir = ipcDir();
-  if (dir && !fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  if (!dir) { return undefined; }
+  try {
+    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+    return dir;
+  } catch (err) {
+    log(`[MCP] ensureDir failed: ${errorMessage(err)}`);
+    return undefined;
   }
-  return dir;
+}
+
+/**
+ * @brief Resolve the IPC directory path for the given extension context.
+ *
+ * Exported so callers (e.g. the MCP Server Definition Provider) can pass the
+ * same path to the MCP server via the `OPENBLINK_IPC_DIR` environment variable.
+ *
+ * @param context  Extension context supplying `storageUri`.
+ * @returns Absolute path to the IPC directory, or `undefined` if no
+ *          workspaceStorage is available (e.g. no workspace is open).
+ */
+export function resolveIpcDir(context: vscode.ExtensionContext): string | undefined {
+  const storageFsPath = context.storageUri?.fsPath;
+  return storageFsPath ? path.join(storageFsPath, IPC_DIR) : undefined;
+}
+
+// ============================================================================
+// Atomic I/O Helpers
+// ============================================================================
+
+/** @brief Monotonic counter to ensure unique tmp paths even within the same millisecond. */
+let tmpCounter = 0;
+
+/** @brief Extract a human-readable error message from any thrown value. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * @brief Atomically write a JSON file using a temp file + rename.
+ *
+ * The MCP server polls result files and reads them with `JSON.parse`.
+ * A non-atomic write can be observed partially, producing a parse error
+ * that the server silently swallows (returning `null`) and eventually
+ * times out.  Using `rename` — which is atomic on the same filesystem —
+ * guarantees that the reader either sees the old file or the fully
+ * written new one.
+ *
+ * @param filePath  Destination path.
+ * @param data      Serializable payload.
+ * @throws {Error} Write or rename failure (tmp file is best-effort removed).
+ */
+async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${++tmpCounter}`;
+  try {
+    await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+    await fs.promises.rename(tmpPath, filePath);
+  } catch (err) {
+    await fs.promises.unlink(tmpPath).catch(() => { /* best-effort cleanup */ });
+    throw err;
+  }
+}
+
+/** @brief Atomically write a text file using a temp file + rename. */
+async function writeTextAtomic(filePath: string, content: string): Promise<void> {
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${++tmpCounter}`;
+  try {
+    await fs.promises.writeFile(tmpPath, content, 'utf-8');
+    await fs.promises.rename(tmpPath, filePath);
+  } catch (err) {
+    await fs.promises.unlink(tmpPath).catch(() => { /* best-effort cleanup */ });
+    throw err;
+  }
+}
+
+// ============================================================================
+// Throttler (at-least-once flush per interval)
+// ============================================================================
+
+/**
+ * @brief Throttler handle.
+ *
+ * `schedule()` marks the state as dirty and ensures a flush will run
+ * within `getInterval()` ms.  Unlike `setTimeout`-based debounce, calling
+ * `schedule()` again before the pending timer fires does **not** reset it.
+ * This prevents starvation under a steady event stream (e.g. a device
+ * printing console output every 100 ms would otherwise never flush with
+ * a 2-second debounce).
+ */
+interface Throttler {
+  /** @brief Mark state as dirty and ensure a flush runs within the configured interval. */
+  schedule(): void;
+  /** @brief Cancel any pending timer and flush immediately. */
+  flushNow(): Promise<void>;
+  /** @brief Cancel pending work and prevent further scheduling. */
+  dispose(): void;
+}
+
+/**
+ * @brief Create a throttler that guarantees at-least-once flushing.
+ *
+ * Semantics:
+ *   - After the first `schedule()` call, a single timer is armed for
+ *     `getInterval()` ms.  Subsequent calls before the timer fires are
+ *     coalesced (no-op).
+ *   - If a new `schedule()` arrives *during* an active flush, a single
+ *     trailing flush is queued; multiple arrivals collapse into one.
+ *   - Errors inside the flusher are logged (not rethrown) and the state
+ *     stays "dirty" so the next `schedule()` will retry.
+ *
+ * @param flusher      Async function that performs the actual work.
+ * @param getInterval  Returns the minimum interval between flushes (ms).
+ * @param label        Short label used in error log messages.
+ */
+function createThrottler(
+  flusher: () => Promise<void>,
+  getInterval: () => number,
+  label: string,
+): Throttler {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight = false;
+  let pending = false;
+  let disposed = false;
+
+  const scheduleTimer = () => {
+    if (disposed || timer !== undefined) { return; }
+    const delay = Math.max(0, getInterval());
+    timer = setTimeout(() => { void runFlush(); }, delay);
+  };
+
+  const runFlush = async () => {
+    timer = undefined;
+    if (disposed) { return; }
+    if (inFlight) { pending = true; return; }
+    inFlight = true;
+    try {
+      await flusher();
+    } catch (err) {
+      log(`[MCP] ${label} flush error: ${errorMessage(err)}`);
+    } finally {
+      inFlight = false;
+      if (!disposed && pending) {
+        pending = false;
+        scheduleTimer();
+      }
+    }
+  };
+
+  return {
+    schedule: () => {
+      if (disposed) { return; }
+      if (inFlight) { pending = true; return; }
+      scheduleTimer();
+    },
+    flushNow: async () => {
+      if (timer) { clearTimeout(timer); timer = undefined; }
+      await runFlush();
+    },
+    dispose: () => {
+      disposed = true;
+      if (timer) { clearTimeout(timer); timer = undefined; }
+      pending = false;
+    },
+  };
+}
+
+// ============================================================================
+// Fallback File Watcher (VS Code + fs.watch)
+// ============================================================================
+
+/** @brief Composite watcher that fires when either VS Code or `fs.watch` detects a change. */
+interface FallbackWatcher {
+  dispose(): void;
+}
+
+/**
+ * @brief Create a file watcher that uses both VS Code's `FileSystemWatcher`
+ *        and Node's `fs.watch` in parallel.
+ *
+ * VS Code's FileSystemWatcher reliably covers paths inside the workspace
+ * but can miss events on paths outside it (the IPC directory lives under
+ * `workspaceStorage`, which is *not* in the workspace).  `fs.watch`
+ * complements this but has its own platform quirks (Linux inotify limits,
+ * macOS FSEvents coalescing).  Running both gives us maximum reach; the
+ * event handler must be idempotent (our consume-then-unlink pattern is).
+ *
+ * @param dir       Absolute directory to watch.
+ * @param filename  Exact filename to trigger on.
+ * @param onEvent   Callback invoked on create/change.  May be called
+ *                  multiple times for a single logical event; handler
+ *                  must be idempotent.
+ */
+function createFallbackWatcher(
+  dir: string,
+  filename: string,
+  onEvent: () => void,
+): FallbackWatcher {
+  let vsWatcher: vscode.FileSystemWatcher | undefined;
+  let fsWatcher: fs.FSWatcher | undefined;
+
+  try {
+    const pattern = new vscode.RelativePattern(dir, filename);
+    vsWatcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, true);
+    vsWatcher.onDidCreate(onEvent);
+    vsWatcher.onDidChange(onEvent);
+  } catch (err) {
+    log(`[MCP] VS Code watcher failed for ${filename}: ${errorMessage(err)}`);
+  }
+
+  try {
+    fsWatcher = fs.watch(dir, { persistent: false }, (eventType, changed) => {
+      if (!changed) { return; }
+      if (changed === filename && (eventType === 'rename' || eventType === 'change')) {
+        onEvent();
+      }
+    });
+    fsWatcher.on('error', (err) => {
+      log(`[MCP] fs.watch error for ${filename}: ${errorMessage(err)}`);
+    });
+  } catch (err) {
+    log(`[MCP] fs.watch setup failed for ${filename}: ${errorMessage(err)}`);
+  }
+
+  return {
+    dispose: () => {
+      try { vsWatcher?.dispose(); } catch { /* ignore */ }
+      try { fsWatcher?.close(); } catch { /* ignore */ }
+    },
+  };
 }
 
 // ============================================================================
@@ -140,11 +394,11 @@ function ensureDir(): string | undefined {
 /** @brief Current enabled state, mirroring `openblink.mcp.enabled`. */
 let enabled = true;
 
-/** @brief FileSystemWatcher for `trigger.json`. */
-let triggerWatcher: vscode.FileSystemWatcher | undefined;
+/** @brief Fallback watcher (VS Code + fs.watch) for `trigger.json`. */
+let triggerWatcher: FallbackWatcher | undefined;
 
-/** @brief FileSystemWatcher for `command.json`. */
-let commandWatcher: vscode.FileSystemWatcher | undefined;
+/** @brief Fallback watcher (VS Code + fs.watch) for `command.json`. */
+let commandWatcher: FallbackWatcher | undefined;
 
 /** @brief Callback invoked when a build trigger is detected. */
 let onTriggerCallback: ((filePath: string, requestId: string) => Promise<void>) | undefined;
@@ -204,24 +458,29 @@ export function setEnabled(value: boolean): void {
   enabled = value;
 
   if (wasEnabled && !enabled) {
-    // Disable: dispose watchers
+    // Disable: dispose watchers.  Throttlers are left alive so state
+    // transitions during the disabled window are not lost; their
+    // `flusher` checks `enabled` and no-ops when disabled.
     triggerWatcher?.dispose();
     triggerWatcher = undefined;
     commandWatcher?.dispose();
     commandWatcher = undefined;
   } else if (!wasEnabled && enabled) {
-    // Enable: re-create watchers
+    // Re-enable: bring up watchers and seed the status file so the MCP
+    // server has a fresh snapshot to read.
     startTriggerWatcher();
     startCommandWatcher();
+    statusThrottler.schedule();
+    flushBuildStatus();
   }
 }
 
 // ============================================================================
-// Status File (debounced 1 s)
+// Status File (throttled)
 // ============================================================================
 
 /**
- * @brief Shape of the `status.json` file written to `.openblink/`.
+ * @brief Shape of the `status.json` file written to the IPC directory.
  */
 export interface McpStatus {
   /** @brief BLE connection state and device details. */
@@ -270,9 +529,6 @@ export interface McpStatus {
   } | null;
 }
 
-/** @brief Debounce timer handle for status file writes. */
-let statusTimer: ReturnType<typeof setTimeout> | undefined;
-
 /** @brief Cached status object, updated incrementally. */
 const currentStatus: McpStatus = {
   connection: { state: 'disconnected', deviceName: null, deviceId: null, mtu: 20 },
@@ -290,8 +546,15 @@ const currentStatus: McpStatus = {
   lastBuild: null,
 };
 
+/** @brief Throttler for status.json writes (interval = openblink.mcp.statusDebounce). */
+const statusThrottler: Throttler = createThrottler(
+  async () => { await flushStatus(); },
+  getMcpStatusDebounce,
+  'status',
+);
+
 /**
- * @brief Merge partial updates into the current status and schedule a debounced write.
+ * @brief Merge partial updates into the current status and schedule a throttled write.
  * @param patch  Partial status fields to merge.
  */
 export function updateStatus(patch: Partial<McpStatus>): void {
@@ -299,7 +562,7 @@ export function updateStatus(patch: Partial<McpStatus>): void {
   // NOTE: shallow merge — only use with top-level primitive fields.
   // For nested objects (connection, metrics, board), use the dedicated update functions.
   Object.assign(currentStatus, patch);
-  scheduleStatusWrite();
+  statusThrottler.schedule();
 }
 
 /**
@@ -313,7 +576,7 @@ export function updateConnectionStatus(
 ): void {
   if (!enabled) { return; }
   currentStatus.connection = { state, deviceName, deviceId, mtu };
-  scheduleStatusWrite();
+  statusThrottler.schedule();
 }
 
 /**
@@ -322,7 +585,7 @@ export function updateConnectionStatus(
 export function updateMetricsStatus(latest: MetricsData, stats: { compile: MetricsStats; transfer: MetricsStats; size: MetricsStats }): void {
   if (!enabled) { return; }
   currentStatus.metrics = { latest, stats };
-  scheduleStatusWrite();
+  statusThrottler.schedule();
 }
 
 /**
@@ -331,7 +594,7 @@ export function updateMetricsStatus(latest: MetricsData, stats: { compile: Metri
 export function updateBoardStatus(board: { name: string; displayName: string; referencePath: string } | null): void {
   if (!enabled) { return; }
   currentStatus.board = board;
-  scheduleStatusWrite();
+  statusThrottler.schedule();
 }
 
 /**
@@ -340,67 +603,71 @@ export function updateBoardStatus(board: { name: string; displayName: string; re
 export function updateBuildResult(success: boolean, error?: string): void {
   if (!enabled) { return; }
   currentStatus.lastBuild = { success, timestamp: new Date().toISOString(), error };
-  scheduleStatusWrite();
+  statusThrottler.schedule();
 }
 
-/** @brief Schedule a debounced write of `status.json`. */
-function scheduleStatusWrite(): void {
-  if (statusTimer) { clearTimeout(statusTimer); }
-  statusTimer = setTimeout(() => flushStatus(), getMcpStatusDebounce());
-}
-
-/** @brief Write the current status to `status.json`. */
-function flushStatus(): void {
+/** @brief Atomically write the current status to `status.json`. */
+async function flushStatus(): Promise<void> {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  let written = false;
-  try {
-    fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify(currentStatus, null, 2), 'utf-8');
-    written = true;
-  } catch {
-    // Silently ignore write errors (e.g. permission issues)
-  }
-  if (written) { onStatusWrittenCallback?.(); }
+  await writeJsonAtomic(path.join(dir, 'status.json'), currentStatus);
+  onStatusWrittenCallback?.();
 }
 
 // ============================================================================
-// Console Log File (debounced 2 s)
+// Console Log File (throttled)
 // ============================================================================
 
-/** @brief Debounce timer handle for console log file writes. */
-let consoleTimer: ReturnType<typeof setTimeout> | undefined;
+/** @brief Snapshot of the last-written console buffer, used to skip no-op flushes. */
+let lastConsoleSignature = '';
 
 /**
- * @brief Schedule a debounced write of the console ring buffer to `openblink-console.log`.
+ * @brief Throttler for `openblink-console.log` writes.
+ *
+ * **Bug fix**: the previous pure-debounce implementation would reset the
+ * timer on every new line from the device, so a program that prints logs
+ * faster than `openblink.mcp.consoleDebounce` (default 2 s) never produced
+ * a written file — the MCP client saw no updates at all.  A throttler
+ * ensures the buffer is flushed at least once per interval while still
+ * coalescing bursty input.
+ */
+const consoleThrottler: Throttler = createThrottler(
+  async () => { await flushConsole(); },
+  getMcpConsoleDebounce,
+  'console',
+);
+
+/**
+ * @brief Schedule a throttled write of the console ring buffer.
  *
  * Called from the extension whenever new console output is received.
- * The actual file write is delayed by 2 seconds and batched.
+ * The actual file write is batched over the `openblink.mcp.consoleDebounce`
+ * window; multiple calls within that window coalesce into a single write.
  */
 export function scheduleConsoleWrite(): void {
   if (!enabled) { return; }
-  if (consoleTimer) { clearTimeout(consoleTimer); }
-  consoleTimer = setTimeout(() => flushConsole(), getMcpConsoleDebounce());
+  consoleThrottler.schedule();
 }
 
-/** @brief Write the current console buffer to `openblink-console.log`. */
-function flushConsole(): void {
+/** @brief Atomically write the current console buffer to `openblink-console.log`. */
+async function flushConsole(): Promise<void> {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  let written = false;
-  try {
-    const lines = getConsoleLog();
-    fs.writeFileSync(path.join(dir, 'openblink-console.log'), lines.join('\n') + '\n', 'utf-8');
-    written = true;
-  } catch {
-    // Silently ignore write errors
-  }
-  if (written) { onConsoleWrittenCallback?.(); }
+  const lines = getConsoleLog();
+  const body = lines.join('\n') + (lines.length > 0 ? '\n' : '');
+  // Skip the write if the buffer content hasn't changed since the last flush.
+  // The console ring buffer is small (≤100 lines by default), so the hash
+  // cost is negligible compared to a filesystem write.
+  if (body === lastConsoleSignature) { return; }
+  await writeTextAtomic(path.join(dir, 'openblink-console.log'), body);
+  lastConsoleSignature = body;
+  onConsoleWrittenCallback?.();
 }
 
 // ============================================================================
-// Build Result File (immediate write)
+// Build Result File (atomic, immediate)
 // ============================================================================
 
 /**
@@ -425,18 +692,26 @@ export interface McpBuildResult {
 
 /**
  * @brief Write a build result file for the MCP server to consume.
+ *
+ * Fire-and-forget: the returned promise resolves immediately; the actual
+ * atomic write completes in the background.  Write failures are logged
+ * to the output channel rather than thrown, matching the legacy behaviour
+ * while giving operators a diagnostic trail.
+ *
  * @param result  Build outcome.
  */
 export function writeBuildResult(result: McpBuildResult): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  try {
-    fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify(result, null, 2), 'utf-8');
-  } catch {
-    // Silently ignore write errors
-  }
-  log(`[MCP] Build result written: ${result.success ? 'Success' : 'Failed'}${result.error ? ` (${result.error})` : ''}`);
+  void (async () => {
+    try {
+      await writeJsonAtomic(path.join(dir, 'result.json'), result);
+      log(`[MCP] Build result written: ${result.success ? 'Success' : 'Failed'}${result.error ? ` (${result.error})` : ''}`);
+    } catch (err) {
+      log(`[MCP] writeBuildResult failed: ${errorMessage(err)}`);
+    }
+  })();
 }
 
 // ============================================================================
@@ -470,11 +745,13 @@ export function onCommand(callback: (command: McpCommand) => Promise<void>): voi
 }
 
 /**
- * @brief Start watching for `trigger.json` in the `.openblink/` directory.
+ * @brief Start watching for `trigger.json` in the IPC directory.
  *
- * Creates a {@link vscode.FileSystemWatcher} that fires when the MCP server
- * writes or updates the trigger file.  The watcher reads the trigger,
- * deletes the file, and invokes the registered callback.
+ * Uses {@link createFallbackWatcher} to combine VS Code's
+ * `FileSystemWatcher` with Node's `fs.watch` — the former may miss events
+ * on workspaceStorage paths (outside the workspace), so the latter
+ * provides a redundant signal.  Both share the same idempotent handler:
+ * read the trigger, remove it, and invoke the registered callback.
  */
 function startTriggerWatcher(): void {
   if (triggerWatcher) { return; }
@@ -482,11 +759,9 @@ function startTriggerWatcher(): void {
   if (!dir) { return; }
 
   ensureDir();
-  const pattern = new vscode.RelativePattern(dir, 'trigger.json');
-  triggerWatcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, true);
+  const triggerPath = path.join(dir, 'trigger.json');
 
   const handleTrigger = async () => {
-    const triggerPath = path.join(dir, 'trigger.json');
     try {
       // Best-effort consume: read the file and then remove it. If a concurrent
       // onDidCreate/onDidChange handler already consumed it, one of these calls
@@ -498,8 +773,17 @@ function startTriggerWatcher(): void {
       } catch {
         return; // File already consumed or does not exist
       }
-      const trigger: McpBuildTrigger = JSON.parse(raw);
-      if (!trigger.requestId || typeof trigger.requestId !== 'string') { return; }
+      let trigger: McpBuildTrigger;
+      try {
+        trigger = JSON.parse(raw);
+      } catch (err) {
+        log(`[MCP] Ignoring malformed trigger.json: ${errorMessage(err)}`);
+        return;
+      }
+      if (!trigger.requestId || typeof trigger.requestId !== 'string') {
+        log('[MCP] Ignoring trigger.json without requestId');
+        return;
+      }
       if (onTriggerCallback) {
         const ws = vscode.workspace.workspaceFolders?.[0];
         const sourceFile = trigger.file
@@ -512,21 +796,22 @@ function startTriggerWatcher(): void {
           const resolvedFile = path.resolve(filePath);
           const resolvedWsRoot = path.resolve(ws.uri.fsPath);
           const rel = path.relative(resolvedWsRoot, resolvedFile);
-          if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) { return; }
+          if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+            log(`[MCP] Rejecting trigger with out-of-workspace path: ${trigger.file}`);
+            return;
+          }
         }
         await onTriggerCallback(filePath, trigger.requestId);
       }
-    } catch {
-      // Ignore malformed trigger files
+    } catch (err) {
+      log(`[MCP] handleTrigger error: ${errorMessage(err)}`);
     }
   };
 
-  triggerWatcher.onDidCreate(handleTrigger);
-  triggerWatcher.onDidChange(handleTrigger);
+  triggerWatcher = createFallbackWatcher(dir, 'trigger.json', () => { void handleTrigger(); });
 
   // Process any trigger.json that was written before the watcher started
-  const existingTrigger = path.join(dir, 'trigger.json');
-  if (fs.existsSync(existingTrigger)) {
+  if (fs.existsSync(triggerPath)) {
     void handleTrigger();
   }
 }
@@ -536,11 +821,11 @@ function startTriggerWatcher(): void {
 // ----------------------------------------------------------------------------
 
 /**
- * @brief Start watching for `command.json` in the `.openblink/` directory.
+ * @brief Start watching for `command.json` in the IPC directory.
  *
- * Creates a {@link vscode.FileSystemWatcher} that fires when the MCP server
- * writes or updates the command file.  The watcher reads the command,
- * deletes the file, and invokes the registered callback.
+ * Mirrors {@link startTriggerWatcher} but for device commands.  Uses the
+ * same fallback-watcher strategy and idempotent consume-then-unlink
+ * handler.
  */
 function startCommandWatcher(): void {
   if (commandWatcher) { return; }
@@ -548,11 +833,9 @@ function startCommandWatcher(): void {
   if (!dir) { return; }
 
   ensureDir();
-  const pattern = new vscode.RelativePattern(dir, 'command.json');
-  commandWatcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, true);
+  const commandPath = path.join(dir, 'command.json');
 
   const handleCommand = async () => {
-    const commandPath = path.join(dir, 'command.json');
     try {
       let raw: string;
       try {
@@ -561,22 +844,29 @@ function startCommandWatcher(): void {
       } catch {
         return; // File already consumed or does not exist
       }
-      const command: McpCommand = JSON.parse(raw);
-      if (!command.requestId || typeof command.requestId !== 'string') { return; }
+      let command: McpCommand;
+      try {
+        command = JSON.parse(raw);
+      } catch (err) {
+        log(`[MCP] Ignoring malformed command.json: ${errorMessage(err)}`);
+        return;
+      }
+      if (!command.requestId || typeof command.requestId !== 'string') {
+        log('[MCP] Ignoring command.json without requestId');
+        return;
+      }
       if (onCommandCallback) {
         await onCommandCallback(command);
       }
-    } catch {
-      // Ignore malformed command files
+    } catch (err) {
+      log(`[MCP] handleCommand error: ${errorMessage(err)}`);
     }
   };
 
-  commandWatcher.onDidCreate(handleCommand);
-  commandWatcher.onDidChange(handleCommand);
+  commandWatcher = createFallbackWatcher(dir, 'command.json', () => { void handleCommand(); });
 
   // Process any command.json that was written before the watcher started
-  const existingCommand = path.join(dir, 'command.json');
-  if (fs.existsSync(existingCommand)) {
+  if (fs.existsSync(commandPath)) {
     void handleCommand();
   }
 }
@@ -587,17 +877,22 @@ function startCommandWatcher(): void {
 
 /**
  * @brief Write a command result file for the MCP server to consume.
+ *
+ * Fire-and-forget; errors are logged.
+ *
  * @param result  Command outcome.
  */
 export function writeCommandResult(result: McpCommandResult): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  try {
-    fs.writeFileSync(path.join(dir, 'command-result.json'), JSON.stringify(result, null, 2), 'utf-8');
-  } catch {
-    // Silently ignore write errors
-  }
+  void (async () => {
+    try {
+      await writeJsonAtomic(path.join(dir, 'command-result.json'), result);
+    } catch (err) {
+      log(`[MCP] writeCommandResult failed: ${errorMessage(err)}`);
+    }
+  })();
 }
 
 // ----------------------------------------------------------------------------
@@ -606,18 +901,23 @@ export function writeCommandResult(result: McpCommandResult): void {
 
 /**
  * @brief Write build diagnostic information for the MCP server.
+ *
+ * Fire-and-forget; errors are logged.
+ *
  * @param diagnostics  Build diagnostic data.
  */
 export function writeBuildDiagnostics(diagnostics: McpBuildDiagnostics): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  try {
-    fs.writeFileSync(path.join(dir, 'build-diagnostics.json'), JSON.stringify(diagnostics, null, 2), 'utf-8');
-    log(`[MCP] Build diagnostics written: ${diagnostics.errors.length} issue(s)`);
-  } catch {
-    // Silently ignore write errors
-  }
+  void (async () => {
+    try {
+      await writeJsonAtomic(path.join(dir, 'build-diagnostics.json'), diagnostics);
+      log(`[MCP] Build diagnostics written: ${diagnostics.errors.length} issue(s)`);
+    } catch (err) {
+      log(`[MCP] writeBuildDiagnostics failed: ${errorMessage(err)}`);
+    }
+  })();
 }
 
 // ----------------------------------------------------------------------------
@@ -642,17 +942,23 @@ export function updateBuildStatus(status: Partial<McpBuildStatus>): void {
 }
 
 /**
- * @brief Write the current build status to `build-status.json`.
+ * @brief Atomically write the current build status to `build-status.json`.
+ *
+ * Fire-and-forget; errors are logged.  Uses a fresh closure over the
+ * current status snapshot so concurrent updates see a consistent write.
  */
 function flushBuildStatus(): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  try {
-    fs.writeFileSync(path.join(dir, 'build-status.json'), JSON.stringify(currentBuildStatus, null, 2), 'utf-8');
-  } catch {
-    // Silently ignore write errors
-  }
+  const snapshot = { ...currentBuildStatus };
+  void (async () => {
+    try {
+      await writeJsonAtomic(path.join(dir, 'build-status.json'), snapshot);
+    } catch (err) {
+      log(`[MCP] flushBuildStatus failed: ${errorMessage(err)}`);
+    }
+  })();
 }
 
 /**
@@ -694,12 +1000,15 @@ export function markBuildCompleted(requestId: string, success: boolean): void {
 /**
  * @brief Initialize the MCP bridge.
  *
- * Reads the `openblink.mcp.enabled` setting, creates the IPC directory if
- * needed, and starts the trigger watcher if MCP is enabled.
+ * Resolves the IPC directory under the extension's workspaceStorage
+ * (`context.storageUri/ipc`), reads the `openblink.mcp.enabled` setting,
+ * creates the IPC directory if needed, and starts the trigger watcher if
+ * MCP is enabled.
  *
  * @param context  The extension context for registering disposables.
  */
 export function initialize(context: vscode.ExtensionContext): void {
+  ipcDirPath = resolveIpcDir(context);
   enabled = vscode.workspace.getConfiguration('openblink').get<boolean>('mcp.enabled', true);
 
   // Read initial config values
@@ -707,17 +1016,22 @@ export function initialize(context: vscode.ExtensionContext): void {
   currentStatus.sourceFile = config.get<string>('sourceFile') ?? 'app.rb';
   currentStatus.slot = config.get<number>('slot') ?? 2;
 
-  if (enabled) {
+  if (!ipcDirPath) {
+    log('[MCP] Bridge initialized (no workspaceStorage available; IPC disabled).');
+    enabled = false;
+  } else if (enabled) {
     startTriggerWatcher();
     startCommandWatcher();
-    scheduleStatusWrite();
+    // Seed status.json and build-status.json so the MCP server can
+    // immediately read a consistent snapshot on first connection.
+    statusThrottler.schedule();
     flushBuildStatus();
-    log('[MCP] Bridge initialized (IPC enabled).');
+    log(`[MCP] Bridge initialized (IPC enabled at ${ipcDirPath}).`);
   } else {
     log('[MCP] Bridge initialized (IPC disabled).');
   }
 
-  // Dispose watcher on deactivation
+  // Dispose watchers and throttlers on deactivation
   context.subscriptions.push({
     dispose: () => {
       enabled = false;
@@ -725,8 +1039,8 @@ export function initialize(context: vscode.ExtensionContext): void {
       triggerWatcher = undefined;
       commandWatcher?.dispose();
       commandWatcher = undefined;
-      if (statusTimer) { clearTimeout(statusTimer); }
-      if (consoleTimer) { clearTimeout(consoleTimer); }
+      statusThrottler.dispose();
+      consoleThrottler.dispose();
     },
   });
 }

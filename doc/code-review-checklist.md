@@ -20,7 +20,7 @@ Each item has a unique ID for issue/PR cross-referencing.
   - `protocol.ts` — BLE firmware transfer protocol (D/P/L/R commands), CRC-16
   - `board-manager.ts` — Board config loading, selection, localized references
   - `ui-manager.ts` — Output Channel, Status Bar, Diagnostics, 6 TreeView providers
-  - `mcp-bridge.ts` — File-based IPC (`.openblink/` directory) between extension and MCP server
+  - `mcp-bridge.ts` — File-based IPC (`<workspaceStorage>/ipc/` subdirectory) between extension and MCP server
   - `mcp-server.ts` — Standalone stdio MCP server (5 tools for AI agents)
   - `types.ts` — Shared type definitions, BLE constants
 
@@ -60,16 +60,15 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | SEC-04 | High | JSON parse safety | All `JSON.parse()` of external data (IPC files, board config) wrapped in try/catch. Malformed input never crashes the extension. | `mcp-bridge.ts`, `mcp-server.ts`, `board-manager.ts` | 🤖 Grep for `JSON.parse` and verify each is inside try/catch | |
 | SEC-05 | High | Prompt injection / jacking | MCP tool outputs are bounded (`MAX_REF_SIZE`). No raw user input or device output is interpolated into AI system prompts. Board reference is read-only from the extension directory. | `mcp-server.ts` | Review all MCP tool return values; verify no string interpolation of untrusted data into prompt-like contexts | |
 | SEC-06 | Medium | MCP output validation | MCP tool responses use `{ type: 'text', text: string }` typed literals. No arbitrary object passthrough to AI agents. `isError` flag set explicitly on failure. | `mcp-server.ts` | 🤖 Verify all tool handlers return typed `content` arrays with `isError` on error paths | |
-| SEC-07 | High | Environment variable validation | `OPENBLINK_WORKSPACE` and `OPENBLINK_EXTENSION_DIR` are validated as absolute paths before use. Relative paths are rejected. | `mcp-server.ts` | 🤖 Grep for `process.env.OPENBLINK_` and verify `path.isAbsolute()` guards | |
+| SEC-07 | High | Environment variable validation | `OPENBLINK_IPC_DIR` and `OPENBLINK_EXTENSION_DIR` are validated as absolute paths before use. Relative paths are rejected. | `mcp-server.ts` | 🤖 Grep for `process.env.OPENBLINK_` and verify `path.isAbsolute()` guards | |
 | SEC-08 | Medium | Dependency audit | `npm audit` run regularly. Known transitive issues documented in `SECURITY.md` with impact analysis. | `SECURITY.md`, `package-lock.json` | Run `npm audit` and compare output with SECURITY.md | |
 | SEC-09 | Critical | Secret management | No hardcoded tokens, keys, or credentials anywhere in the codebase. CI secrets stored in GitHub Secrets with environment protection. | All files | 🤖 Grep for patterns: API keys, tokens, passwords, Bearer, authorization headers | |
 | SEC-10 | Medium | Untrusted workspace | `capabilities.untrustedWorkspaces.supported` is `false` in package.json. Extension refuses to activate in untrusted workspaces. | `package.json` | 🤖 Check `capabilities.untrustedWorkspaces` field | |
 | SEC-11 | High | WASM sandbox | Emscripten virtual filesystem isolated from the host. Temp files cleaned in `finally` blocks. No `eval()` or dynamic code execution. | `compiler.ts` | 🤖 Verify temp file cleanup in `finally`; grep for `eval(`, `Function(`, `new Function` | |
 | SEC-12 | Medium | IPC file atomicity | `trigger.json` consumed atomically (read + unlink in single try block). No TOCTOU gap between existence check and read. | `mcp-bridge.ts` | Review trigger consumption logic; verify no separate `existsSync` before `readFileSync` | |
-| SEC-13 | Medium | Shell script injection | `post_write_rb.sh` rejects file paths with control characters and `..` path segments. JSON output uses `printf` with escaped values. | `.windsurf/hooks/post_write_rb.sh` | Review bash script for injection vectors; verify path segment validation | |
-| SEC-14 | High | BLE data bounds | Firmware transfer validates content length (1–65535 bytes), slot (1 or 2), and MTU (> DATA_HEADER_SIZE) before sending. CRC-16 checksum guards integrity. | `protocol.ts` | 🤖 Verify range checks at function entry for `sendFirmware`, `sendResetCommand`, etc. | |
-| SEC-15 | Medium | Denial of service | Ring buffers capped (console: 100 lines, metrics: 100 entries). MCP build_and_blink has 30s timeout. BLE scan has 10s timeout. | `ui-manager.ts`, `mcp-server.ts`, `ble-manager.ts`, `types.ts` | 🤖 Verify buffer caps and timeout constants | |
-| SEC-16 | High | Configuration injection | User-provided configuration values (`openblink.sourceFile`, `openblink.board`, `openblink.slot`) validated before use. Slot constrained to 1 or 2. Source file path validated against workspace. | `extension.ts`, `board-manager.ts` | 🤖 Grep for `getConfiguration('openblink')` and verify each `.get()` is validated | |
+| SEC-13 | High | BLE data bounds | Firmware transfer validates content length (1–65535 bytes), slot (1 or 2), and MTU (> DATA_HEADER_SIZE) before sending. CRC-16 checksum guards integrity. | `protocol.ts` | 🤖 Verify range checks at function entry for `sendFirmware`, `sendResetCommand`, etc. | |
+| SEC-14 | Medium | Denial of service | Ring buffers capped (console: 100 lines, metrics: 100 entries). MCP build_and_blink has 30s timeout. BLE scan has 10s timeout. | `ui-manager.ts`, `mcp-server.ts`, `ble-manager.ts`, `types.ts` | 🤖 Verify buffer caps and timeout constants | |
+| SEC-15 | High | Configuration injection | User-provided configuration values (`openblink.sourceFile`, `openblink.board`, `openblink.slot`) validated before use. Slot constrained to 1 or 2. Source file path validated against workspace. | `extension.ts`, `board-manager.ts` | 🤖 Grep for `getConfiguration('openblink')` and verify each `.get()` is validated | |
 
 ## 2. Stability (STA)
 
@@ -97,13 +96,12 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | PLT-01 | High | Path separators | Use `path.join()`, `path.resolve()`, `path.relative()` exclusively. No string concatenation with `/` for file paths. | All `src/*.ts` | 🤖 Grep for string path concatenation patterns (e.g., `` + '/'``, `` `${...}/` ``) in non-URL contexts | |
 | PLT-02 | High | Path comparison | Use `path.relative()` (not `startsWith()`) for workspace containment checks. | `mcp-bridge.ts`, `mcp-server.ts` | 🤖 Grep for `startsWith` applied to file paths | |
 | PLT-03 | High | Noble platform handling | `@abandonware/noble` native bindings verified per-platform in CI. | `ci.yml`, `release.yml` | Verify CI native binding check steps per OS | |
-| PLT-04 | Low | Shell script portability | `post_write_rb.sh` uses bash-specific features. Windows limitation documented. | `.windsurf/hooks/post_write_rb.sh` | Review for POSIX compatibility; check documentation | |
-| PLT-05 | Medium | CI matrix | Tests run on 3 OS × 2 Node versions. All combinations green. | `ci.yml` | Verify matrix definition and recent CI results | |
-| PLT-06 | High | VSIX platform targets | Release builds separate VSIX per target platform with correct native bindings. | `release.yml` | Verify matrix; check `bluetooth-hci-socket` removal for non-Linux | |
-| PLT-07 | Medium | Line endings | No `\r\n` assumptions in parsing. Path traversal regex uses `[\\/]+`. | `mcp-server.ts`, `mcp-bridge.ts` | 🤖 Grep for `\r` handling in split/parse logic | |
-| PLT-08 | Low | Filesystem case sensitivity | `forceConsistentCasingInFileNames: true` in tsconfig.json. | `tsconfig.json` | 🤖 Verify tsconfig flag | |
-| PLT-09 | High | Native binding whitelist | `.vscodeignore` whitelists noble's runtime dependencies correctly. | `.vscodeignore` | 🤖 Verify whitelist entries against noble's runtime dependency tree | |
-| PLT-10 | Low | Node.js version | CI and release use consistent Node versions. `engines` field in package.json reflects minimum. | `package.json`, `ci.yml`, `release.yml` | 🤖 Compare `engines.node` with CI matrix | |
+| PLT-04 | Medium | CI matrix | Tests run on 3 OS × 2 Node versions. All combinations green. | `ci.yml` | Verify matrix definition and recent CI results | |
+| PLT-05 | High | VSIX platform targets | Release builds separate VSIX per target platform with correct native bindings. | `release.yml` | Verify matrix; check `bluetooth-hci-socket` removal for non-Linux | |
+| PLT-06 | Medium | Line endings | No `\r\n` assumptions in parsing. Path traversal regex uses `[\\/]+`. | `mcp-server.ts`, `mcp-bridge.ts` | 🤖 Grep for `\r` handling in split/parse logic | |
+| PLT-07 | Low | Filesystem case sensitivity | `forceConsistentCasingInFileNames: true` in tsconfig.json. | `tsconfig.json` | 🤖 Verify tsconfig flag | |
+| PLT-08 | High | Native binding whitelist | `.vscodeignore` whitelists noble's runtime dependencies correctly. | `.vscodeignore` | 🤖 Verify whitelist entries against noble's runtime dependency tree | |
+| PLT-09 | Low | Node.js version | CI and release use consistent Node versions. `engines` field in package.json reflects minimum. | `package.json`, `ci.yml`, `release.yml` | 🤖 Compare `engines.node` with CI matrix | |
 
 ## 4. Multi-IDE Compatibility (IDE)
 
@@ -111,10 +109,9 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 |----|----------|-------|---------|-----------|--------------|--------|
 | IDE-01 | High | VSCode API minimum | `engines.vscode` version matches all APIs used. | `package.json` | Check VS Code API docs for each API; verify availability at declared minimum | |
 | IDE-02 | High | Copilot MCP auto-discovery | `mcpServerDefinitionProviders` in package.json + `registerMcpServerDefinitionProvider` guarded by feature detection. | `package.json`, `extension.ts` | 🤖 Verify `typeof` guard before `vscode.lm.registerMcpServerDefinitionProvider` | |
-| IDE-03 | Medium | Windsurf Cascade Hook | `.windsurf/hooks.json` and `post_write_rb.sh` present and excluded from VSIX. | `.windsurf/`, `.vscodeignore` | 🤖 Verify `.windsurf/**` in `.vscodeignore` | |
-| IDE-04 | Medium | Cursor/Cline setup | `openblink.setupMcp` command generates correct MCP config JSON with dynamic paths. | `extension.ts` | Run command and validate generated JSON structure and paths | |
-| IDE-05 | Medium | Open VSX publishing | Release pipeline publishes to Open VSX with failure isolation. | `release.yml` | Verify Open VSX publish step with `continue-on-error` | |
-| IDE-06 | High | API feature detection | Optional APIs (`vscode.lm`) checked with `typeof` before use. Extension works in IDEs without these APIs. | `extension.ts` | 🤖 Grep for optional API calls; verify `typeof` or `?.` guards | |
+| IDE-03 | Medium | Cursor/Cline/Windsurf setup | `openblink.setupMcp` command generates correct MCP config JSON with absolute `OPENBLINK_IPC_DIR` and `OPENBLINK_EXTENSION_DIR` env vars. | `extension.ts` | Run command and validate generated JSON structure and paths | |
+| IDE-04 | Medium | Open VSX publishing | Release pipeline publishes to Open VSX with failure isolation. | `release.yml` | Verify Open VSX publish step with `continue-on-error` | |
+| IDE-05 | High | API feature detection | Optional APIs (`vscode.lm`) checked with `typeof` before use. Extension works in IDEs without these APIs. | `extension.ts` | 🤖 Grep for optional API calls; verify `typeof` or `?.` guards | |
 
 ## 5. Reliability (REL)
 
@@ -190,7 +187,7 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 
 | ID | Priority | Check | Details | Key Files | Verification | Status |
 |----|----------|-------|---------|-----------|--------------|--------|
-| PKG-01 | High | .vscodeignore completeness | Excludes: `src/`, `vendor/`, `node_modules/` (except noble + deps), `.github/`, `doc/`, `.windsurf/`, `*.ts`, `*.map`, dev config files. | `.vscodeignore` | 🤖 Review exclusion patterns; run `vsce ls` and check for unexpected files | |
+| PKG-01 | High | .vscodeignore completeness | Excludes: `src/`, `vendor/`, `node_modules/` (except noble + deps), `.github/`, `doc/`, `*.ts`, `*.map`, dev config files. | `.vscodeignore` | 🤖 Review exclusion patterns; run `vsce ls` and check for unexpected files | |
 | PKG-02 | High | Required inclusions | Includes: `out/extension.js`, `out/mcp-server.js`, WASM files, board resources, icons, l10n, package.nls, LICENSE, README, CHANGELOG. | `.vscodeignore`, `webpack.config.js` | Run `vsce ls` and verify all required files are present | |
 | PKG-03 | High | Noble native bindings | Platform-specific `.node` files per VSIX target. Linux includes `bluetooth_hci_socket.node`. Non-Linux strips bluetooth-hci-socket. | `release.yml`, `.vscodeignore` | Verify release matrix and per-platform binding removal | |
 | PKG-04 | Medium | No dev artifacts | Test output, source maps, TypeScript source, lock file, config files excluded. | `.vscodeignore` | 🤖 Run `vsce ls` and grep for test/dev files | |
@@ -278,8 +275,8 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | ID | Priority | Check | Details | Key Files | Verification | Status |
 |----|----------|-------|---------|-----------|--------------|--------|
 | BWC-01 | High | Configuration migration | When changing/renaming configuration keys, old values are read and migrated gracefully. No silent settings loss on upgrade. | `extension.ts` | Review configuration read logic for migration paths | |
-| BWC-02 | High | Command ID stability | Command IDs (`openblink.buildAndBlink`, etc.) never renamed without deprecation path. External tools (MCP, Cascade hooks) depend on these IDs. | `package.json` | 🤖 Compare command IDs with previous release; flag renames | |
-| BWC-03 | Medium | IPC file format stability | `.openblink/` file schemas (status.json, trigger.json, result.json) versioned or backward compatible. MCP server handles old formats gracefully. | `mcp-bridge.ts`, `mcp-server.ts` | Review JSON schema for version field or backward compat | |
+| BWC-02 | High | Command ID stability | Command IDs (`openblink.buildAndBlink`, etc.) never renamed without deprecation path. External MCP clients depend on these IDs. | `package.json` | 🤖 Compare command IDs with previous release; flag renames | |
+| BWC-03 | Medium | IPC file format stability | IPC file schemas (`status.json`, `trigger.json`, `result.json`) in `<workspaceStorage>/ipc/` are versioned or backward compatible. MCP server handles old formats gracefully. | `mcp-bridge.ts`, `mcp-server.ts` | Review JSON schema for version field or backward compat | |
 | BWC-04 | Medium | Semantic versioning | Version bump matches change scope: patch for fixes, minor for features, major for breaking changes. | `package.json`, `CHANGELOG.md` | Compare CHANGELOG entries with version bump level | |
 | BWC-05 | Low | Deprecation notices | Deprecated features, APIs, or configuration keys emit warnings before removal. | `extension.ts` | 🤖 Grep for deprecated features; verify user-facing notices | |
 
@@ -288,15 +285,15 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | ID | Priority | Check | Details | Key Files | Verification | Status |
 |----|----------|-------|---------|-----------|--------------|--------|
 | PRI-01 | High | No telemetry without consent | Extension does not collect or transmit telemetry, analytics, or usage data. If telemetry is added, it must be opt-in with clear disclosure. | All `src/*.ts` | 🤖 Grep for HTTP/HTTPS requests, `fetch`, `XMLHttpRequest`, telemetry APIs | |
-| PRI-02 | Medium | Local-only data | All data (BLE logs, metrics, IPC files) stored locally in `.openblink/` or extension storage. No cloud sync. | `mcp-bridge.ts`, `extension.ts` | 🤖 Grep for outbound network calls | |
+| PRI-02 | Medium | Local-only data | All data (BLE logs, metrics, IPC files) stored locally in the extension workspaceStorage (`<workspaceStorage>/ipc/`). No cloud sync. | `mcp-bridge.ts`, `extension.ts` | 🤖 Grep for outbound network calls | |
 | PRI-03 | Medium | Sensitive data in logs | Device addresses, firmware contents, and user code are not logged at verbose levels that could be unintentionally shared. | `extension.ts`, `ble-manager.ts` | Review log statements for PII or sensitive content | |
-| PRI-04 | Low | IPC file cleanup | `.openblink/` IPC files cleaned on extension deactivation or MCP disable. No stale sensitive data on disk. | `mcp-bridge.ts` | 🤖 Verify cleanup in `disable()` and `dispose()` | |
+| PRI-04 | Low | IPC file cleanup | IPC files in `<workspaceStorage>/ipc/` cleaned on extension deactivation or MCP disable. No stale sensitive data on disk. | `mcp-bridge.ts` | 🤖 Verify cleanup in `disable()` and `dispose()` | |
 
 ## 19. Repository Hygiene (REP)
 
 | ID | Priority | Check | Details | Key Files | Verification | Status |
 |----|----------|-------|---------|-----------|--------------|--------|
-| REP-01 | Medium | .gitignore coverage | Build artifacts (`out/`, `dist/`), native bindings, `.openblink/`, OS files, editor files, and `node_modules/` ignored. | `.gitignore` | 🤖 Verify patterns cover all generated files | |
+| REP-01 | Medium | .gitignore coverage | Build artifacts (`out/`, `dist/`), native bindings, OS files, editor files, and `node_modules/` ignored. | `.gitignore` | 🤖 Verify patterns cover all generated files | |
 | REP-02 | Medium | Submodule status | `vendor/emsdk` and `vendor/mruby` submodules are up-to-date and pinned to known-good commits. `.gitmodules` paths are correct. | `.gitmodules`, `vendor/` | Run `git submodule status` and verify commit SHAs | |
 | REP-03 | Low | Branch protection | `main` branch requires PR reviews and passing CI before merge. | GitHub settings | Verify branch protection rules in repo settings | |
 | REP-04 | Low | Commit message convention | Commits follow a consistent format (e.g., Conventional Commits or project-specific convention). | Git history | Review recent commit messages for consistency | |
@@ -324,16 +321,16 @@ Copy the tables into a GitHub Issue or PR comment. Fill the **Status** column:
 | **mruby/c** | Lightweight Ruby implementation for microcontrollers; compiled to bytecode via `mrbc` |
 | **mrbc** | mruby bytecode compiler; runs as WASM module in the extension via Emscripten |
 | **MCP** | Model Context Protocol — standardized API for AI agents to interact with tools |
-| **MCP Bridge** | Extension-side IPC layer communicating with the MCP server via JSON files in `.openblink/` |
+| **MCP Bridge** | Extension-side IPC layer communicating with the MCP server via JSON files in the extension workspaceStorage (`<workspaceStorage>/ipc/`) |
 | **MCP Server** | Standalone Node.js process providing MCP tools (build_and_blink, get_device_info, etc.) via stdio |
-| **IPC** | Inter-Process Communication — file-based mechanism using `.openblink/` directory |
+| **IPC** | Inter-Process Communication — file-based mechanism using the extension workspaceStorage `ipc/` subdirectory |
 | **trigger.json** | IPC file written by MCP server to request a build; consumed (read + unlink) by the extension |
 | **result.json** | IPC file written by the extension with build results; read by MCP server |
 | **status.json** | IPC file with current extension state (connection, device info, board); debounce-written |
 | **Noble** | `@abandonware/noble` — Node.js BLE library with native bindings per platform |
 | **MTU** | Maximum Transmission Unit — maximum BLE packet size negotiated with the device |
 | **VSIX** | VS Code extension package format (ZIP with manifest) |
-| **Cascade** | Windsurf IDE's AI assistant; integrates via `.windsurf/hooks.json` |
+| **Cascade** | Windsurf IDE's AI assistant; integrates via MCP (Model Context Protocol) |
 | **D/P/L/R** | BLE protocol command types: Data, Program-info, List, Reset |
 | **CRC-16** | 16-bit Cyclic Redundancy Check used for firmware transfer integrity |
 | **TOCTOU** | Time-of-check to time-of-use — race condition class |

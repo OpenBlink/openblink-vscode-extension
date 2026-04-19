@@ -109,21 +109,6 @@ See [Build System](build-system.md) for details.
 - Sanitize file paths against path traversal when constructing from user input
 - Run `npm audit` regularly and review [SECURITY.md](../SECURITY.md) for known dependency issues
 
-## Windsurf Cascade Hook
-
-The repository ships with a Cascade Hook (`.windsurf/hooks.json`) that auto-triggers Build & Blink whenever Cascade edits a `.rb` file. This provides a seamless AI-assisted development workflow:
-
-1. Open the project in Windsurf
-2. Connect to an OpenBlink device
-3. Ask Cascade to edit your `.rb` source file
-4. The hook automatically compiles and transfers the updated code to the device
-
-The hook uses the `post_write_code` event. When Cascade writes to a `.rb` file, the script `.windsurf/hooks/post_write_rb.sh` creates a trigger file in `.openblink/`, which the extension's `FileSystemWatcher` picks up to run Build & Blink.
-
-No additional configuration is needed — the hook is included in the repository and activates automatically in Windsurf.  Note that `.windsurf/` is excluded from the published VSIX (Windsurf reads hooks from the workspace root, not from the extension installation directory).  End users who want the hook must copy it to their own project; see [MCP Integration — Cascade Hook](mcp-integration.md#windsurf-cascade-hook-automatic-build--blink).
-
-See [Architecture — MCP Integration](architecture.md#data-flow-mcp-integration) for details on the file-based IPC mechanism.
-
 ## Releasing
 
 Releases are automated via GitHub Actions. Pushing a version tag triggers the workflow, which builds **platform-specific VSIX files** and publishes them to all distribution channels.
