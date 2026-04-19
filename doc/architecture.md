@@ -46,7 +46,7 @@ graph TB
     PROTO --> DEV
     DEV -->|Console Notifications| BLE
     BLE -->|Console Output| UI
-    BRIDGE <-->|.openblink/ files| MCP
+    BRIDGE <-->|workspaceStorage IPC files| MCP
     AI <-->|MCP protocol| MCP
 ```
 
@@ -60,7 +60,7 @@ graph TB
 | Protocol | `protocol.ts` | OpenBlink BLE protocol (D/P/L/R commands), CRC16, input validation (size/slot/MTU) |
 | Board Manager | `board-manager.ts` | Board configurations with runtime JSON validation, sample code, references (defaults to Generic board) |
 | UI Manager | `ui-manager.ts` | Output Channel, Status Bar, Diagnostics, TreeView providers (Tasks, DeviceInfo, Metrics, **Devices**, BoardReference, **McpStatus**), console ring buffer |
-| MCP Bridge | `mcp-bridge.ts` | File-based IPC between extension and MCP server (debounced `status.json`, `openblink-console.log`, `trigger.json`, `result.json`) |
+| MCP Bridge | `mcp-bridge.ts` | File-based IPC (extension workspaceStorage `ipc/` subdirectory) between extension and MCP server (debounced `status.json`, `openblink-console.log`, `trigger.json`, `result.json`) |
 | MCP Server | `mcp-server.ts` | Standalone stdio MCP server exposing 5 tools (`build_and_blink`, `get_device_info`, `get_console_output`, `get_metrics`, `get_board_reference`) |
 | Types | `types.ts` | Shared type definitions, BLE constants (`MIN_USABLE_MTU`, `CHARACTERISTIC_DISCOVERY_TIMEOUT`, etc.), `SavedDevice` |
 
@@ -108,13 +108,13 @@ Background saves (e.g. `files.autoSave`, format-on-save of non-focused files) do
 
 ## Data Flow: MCP Integration
 
-The MCP server runs as a separate stdio-based Node.js process, launched by the IDE's MCP client.  It communicates with the extension through JSON files in the `.openblink/` directory (file-based IPC).
+The MCP server runs as a separate stdio-based Node.js process, launched by the IDE's MCP client.  It communicates with the extension through JSON files in the extension's VS Code workspaceStorage `ipc/` subdirectory (file-based IPC).  The absolute path is passed to the MCP server via the `OPENBLINK_IPC_DIR` environment variable, so no files are written into the user's workspace tree.
 
 ```mermaid
 sequenceDiagram
     participant AI as AI Agent
     participant MCP as mcp-server.ts
-    participant FS as .openblink/ files
+    participant FS as workspaceStorage ipc/ files
     participant Ext as extension.ts
     participant Bridge as mcp-bridge.ts
 
@@ -141,5 +141,3 @@ sequenceDiagram
 ```
 
 The `openblink.mcp.enabled` setting (default `true`) controls whether the MCP bridge writes IPC files and watches for triggers.  When disabled, no disk I/O occurs and the MCP server definition provider returns an empty array.  Existing IPC files are left on disk but become stale.
-
-For Windsurf, a Cascade Hook (`.windsurf/hooks.json` → `post_write_code`) automatically creates a `trigger.json` when Cascade edits a `.rb` file, providing transparent Build & Blink without explicit MCP tool calls.

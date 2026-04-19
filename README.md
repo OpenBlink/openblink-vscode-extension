@@ -109,7 +109,7 @@ These qualities come together to create a **happy hacking experience** for every
 - **Metrics** — Compile time, transfer time, and program size with min/avg/max statistics in the TreeView
 - **Multi-language UI** — English, やさしい日本語, 简体中文, 繁體中文
 - **AI-friendly** — Structured `[COMPILE]`/`[TRANSFER]`/`[DEVICE]`/`[BLE]` output for Windsurf Cascade integration
-- **MCP Integration** — Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server exposes Build & Blink, device info, console output, metrics, and board reference as AI agent tools (Windsurf, VS Code Copilot, Cursor, Cline), with a dedicated **MCP Status** sidebar view showing connection activity and build results
+- **MCP Integration** — Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server exposes Build & Blink, device info, console output, metrics, and board reference as AI agent tools (Windsurf, VS Code Copilot, Cursor, Cline), with a dedicated **MCP Status** sidebar view showing connection activity and build results. Supports structured output (MCP spec 2025-06-18), resource links, and workspace-level `.vscode/mcp.json` installation (VS Code 1.106+)
 
 ## Supported Platforms
 
