@@ -60,8 +60,8 @@ graph TB
 | Protocol | `protocol.ts` | OpenBlink BLE protocol (D/P/L/R commands), CRC16, input validation (size/slot/MTU) |
 | Board Manager | `board-manager.ts` | Board configurations with runtime JSON validation, sample code, references (defaults to Generic board) |
 | UI Manager | `ui-manager.ts` | Output Channel, Status Bar, Diagnostics, TreeView providers (Tasks, DeviceInfo, Metrics, **Devices**, BoardReference, **McpStatus**), console ring buffer |
-| MCP Bridge | `mcp-bridge.ts` | File-based IPC (extension workspaceStorage `ipc/` subdirectory) between extension and MCP server (debounced `status.json`, `openblink-console.log`, `trigger.json`, `result.json`) |
-| MCP Server | `mcp-server.ts` | Standalone stdio MCP server exposing 5 tools (`build_and_blink`, `get_device_info`, `get_console_output`, `get_metrics`, `get_board_reference`) |
+| MCP Bridge | `mcp-bridge.ts` | File-based IPC (extension workspaceStorage `ipc/` subdirectory) between extension and MCP server (throttled `status.json`, `openblink-console.log`, `trigger.json`, `result.json`) |
+| MCP Server | `mcp-server.ts` | Standalone stdio MCP server exposing 13 tools (`build_and_blink`, `get_device_info`, `get_console_output`, `get_metrics`, `get_board_reference`, `validate_ruby_code`, `scan_devices`, `connect_device`, `disconnect_device`, `soft_reset`, `get_build_diagnostics`, `get_build_status`, `cancel_build`) |
 | Types | `types.ts` | Shared type definitions, BLE constants (`MIN_USABLE_MTU`, `CHARACTERISTIC_DISCOVERY_TIMEOUT`, etc.), `SavedDevice` |
 
 ## Data Flow: Build & Blink

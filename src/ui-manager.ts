@@ -1001,10 +1001,10 @@ export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.Tre
    * @brief Build the tree structure for the MCP status view.
    *
    * - Top-level: enabled/disabled, file-write timestamps, last
-   *   request/result, and a collapsible `History (n)` section when any
-   *   entries exist.
+   *   request/result, and a collapsible `History (n)` section (always
+   *   shown; displays a placeholder item when no entries exist yet).
    * - Children of the history section: one item per logged invocation,
-   *   most recent first.
+   *   most recent first; a placeholder is shown when the list is empty.
    */
   getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
     if (!element) {
@@ -1095,7 +1095,7 @@ export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   /**
    * @brief Build a single history entry's tree item.
    *
-   * Label: `HH:MM:SS  <tool>`
+   * Label: `<locale time>  <tool>` (format depends on user locale)
    * Description: `<summary>  (<durationMs>ms)`
    * Tooltip: detail (success info or error message)
    * Icon: spinner (pending) / check (success) / error (failed)
