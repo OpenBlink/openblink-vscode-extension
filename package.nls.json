@@ -20,6 +20,8 @@
   "view.metrics": "Metrics",
   "view.boardReference": "Board Reference",
   "command.setupMcp": "Setup MCP Server",
+  "command.installMcpWorkspace": "Install MCP Server to Workspace",
+  "command.clearMcpHistory": "Clear MCP History",
   "config.mcp.enabled": "Enable MCP (Model Context Protocol) integration for AI agent access to Build & Blink, device info, console output, metrics, and board reference",
   "view.mcpStatus": "MCP Status",
   "config.ble.writeTimeout": "BLE characteristic write timeout in milliseconds (1000-60000)",
