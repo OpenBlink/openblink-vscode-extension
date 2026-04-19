@@ -82,5 +82,9 @@
   "Connected": "已连接",
   "Connecting...": "连接中...",
   "Device not found. Please scan again.": "未找到设备。请重新扫描。",
-  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "无法加载蓝牙模块。此平台可能不支持 BLE。"
+  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "无法加载蓝牙模块。此平台可能不支持 BLE。",
+  "Request ID": "请求ID",
+  "Status": "状态",
+  "Params": "参数",
+  "Duration": "耗时"
 }

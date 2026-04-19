@@ -82,5 +82,9 @@
   "Connected": "Connected",
   "Connecting...": "Connecting...",
   "Device not found. Please scan again.": "Device not found. Please scan again.",
-  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "Failed to load Bluetooth module. BLE support may not be available on this platform."
+  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "Failed to load Bluetooth module. BLE support may not be available on this platform.",
+  "Request ID": "Request ID",
+  "Status": "Status",
+  "Params": "Params",
+  "Duration": "Duration"
 }

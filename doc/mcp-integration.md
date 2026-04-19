@@ -78,11 +78,14 @@ schema:
 }
 ```
 
-Committing `.vscode/mcp.json` to your repository lets every collaborator
-pick up the OpenBlink MCP server automatically when they open the
-workspace in VS Code. Existing `servers` entries in the file are
-preserved; only `openblink` is added or overwritten (with a confirmation
-prompt if it already exists).
+The generated `.vscode/mcp.json` contains **machine-specific absolute
+paths** (extension install path and `workspaceStorage/<hash>`), so it
+should **not** be committed to the repository as-is — the file will not
+work on other machines. Ask each collaborator to install the OpenBlink
+extension and run **OpenBlink: Install MCP Server to Workspace** in
+their own VS Code environment. Existing `servers` entries in the file
+are preserved; only `openblink` is added or overwritten (with a
+confirmation prompt if it already exists).
 
 ### Windsurf / Cursor / Cline (Manual)
 

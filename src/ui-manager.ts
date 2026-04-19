@@ -880,6 +880,7 @@ export interface McpHistoryEntry {
 class McpHistorySectionItem extends vscode.TreeItem {
   constructor(count: number) {
     super(`${l10n.t('History')} (${count})`, vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = 'mcpHistorySection';
     this.iconPath = new vscode.ThemeIcon('history');
     this.contextValue = 'mcpHistorySection';
   }
@@ -1118,11 +1119,11 @@ export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
     const tooltipLines = [
       `${entry.tool}`,
-      `Request ID: ${entry.requestId}`,
-      `Status: ${entry.status}`,
+      `${l10n.t('Request ID')}: ${entry.requestId}`,
+      `${l10n.t('Status')}: ${entry.status}`,
     ];
-    if (entry.summary) { tooltipLines.push(`Params: ${entry.summary}`); }
-    if (entry.durationMs !== undefined) { tooltipLines.push(`Duration: ${entry.durationMs}ms`); }
+    if (entry.summary) { tooltipLines.push(`${l10n.t('Params')}: ${entry.summary}`); }
+    if (entry.durationMs !== undefined) { tooltipLines.push(`${l10n.t('Duration')}: ${entry.durationMs}ms`); }
     if (entry.detail) { tooltipLines.push('', entry.detail); }
     item.tooltip = tooltipLines.join('\n');
 

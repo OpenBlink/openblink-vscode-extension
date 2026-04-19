@@ -30,6 +30,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   diagnostics, and `get_board_reference` attaches a `resource_link` to
   the board's Markdown reference file. VS Code surfaces these as
   drag-to-chat and click-to-open affordances.
+- **MCP server debug logging** — Set `OPENBLINK_MCP_DEBUG=1` in the MCP
+  server's environment block to emit per-tool-invocation, per-poll, and
+  per-I/O stderr logs.  Invaluable for diagnosing tool timeouts and IPC
+  mismatches.
+- **Early IPC validation at MCP startup** — `mcp-server.js` now verifies
+  `OPENBLINK_IPC_DIR` at boot and exits with a clear error message if it
+  is missing or not an absolute path, instead of failing on the first
+  tool call.
+- **MCP command history in the sidebar** — The **MCP Status** tree view
+  now includes a collapsible `History (n)` section listing up to 50 of
+  the most recent AI-agent-initiated tool invocations (build, scan,
+  connect, validate, reset, etc.).  Each entry shows the tool name,
+  timestamp, parameter summary, duration, and a success/failed icon;
+  hovering reveals the full request ID and detail message.  A title-bar
+  **Clear MCP History** button (command `openblink.clearMcpHistory`)
+  lets the user reset the list at any time.  Every history transition
+  (`addHistoryEntry` → `updateHistoryEntry`) is also logged to the
+  `OpenBlink` output channel with the `[MCP]` prefix for a durable
+  audit trail.
 
 ### Fixed
 - **MCP console log stalling** — `openblink-console.log` was never refreshed
@@ -54,27 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   bridge swallowed errors with no trace.  All failures are now logged to
   the `OpenBlink` output channel with the `[MCP]` prefix so operators
   can diagnose permission errors, disk-full conditions, etc.
-
-### Added
-- **MCP server debug logging** — Set `OPENBLINK_MCP_DEBUG=1` in the MCP
-  server's environment block to emit per-tool-invocation, per-poll, and
-  per-I/O stderr logs.  Invaluable for diagnosing tool timeouts and IPC
-  mismatches.
-- **Early IPC validation at MCP startup** — `mcp-server.js` now verifies
-  `OPENBLINK_IPC_DIR` at boot and exits with a clear error message if it
-  is missing or not an absolute path, instead of failing on the first
-  tool call.
-- **MCP command history in the sidebar** — The **MCP Status** tree view
-  now includes a collapsible `History (n)` section listing up to 50 of
-  the most recent AI-agent-initiated tool invocations (build, scan,
-  connect, validate, reset, etc.).  Each entry shows the tool name,
-  timestamp, parameter summary, duration, and a success/failed icon;
-  hovering reveals the full request ID and detail message.  A title-bar
-  **Clear MCP History** button (command `openblink.clearMcpHistory`)
-  lets the user reset the list at any time.  Every history transition
-  (`addHistoryEntry` → `updateHistoryEntry`) is also logged to the
-  `OpenBlink` output channel with the `[MCP]` prefix for a durable
-  audit trail.
 
 ### Removed
 - **Windsurf Cascade Hook** — Removed `.windsurf/hooks.json` and `.windsurf/hooks/post_write_rb.sh`. Automatic Build & Blink triggered by Cascade edits is no longer provided via filesystem hooks; use the `build_and_blink` MCP tool explicitly instead.

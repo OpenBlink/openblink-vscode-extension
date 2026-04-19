@@ -82,5 +82,9 @@
   "Connected": "✅ つながっています",
   "Connecting...": "🔗 つないでいます...",
   "Device not found. Please scan again.": "⚠️ デバイスがみつかりません。もういちどスキャンしてください。",
-  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "❌ Bluetooth がつかえませんでした。このパソコンでは Bluetooth がつかえないかもしれません。"
+  "Failed to load Bluetooth module. BLE support may not be available on this platform.": "❌ Bluetooth がつかえませんでした。このパソコンでは Bluetooth がつかえないかもしれません。",
+  "Request ID": "リクエストID",
+  "Status": "ステータス",
+  "Params": "パラメータ",
+  "Duration": "じかん"
 }

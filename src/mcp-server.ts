@@ -48,6 +48,7 @@ import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import { pathToFileURL } from 'url';
 
 // ============================================================================
 // Debug Logging
@@ -780,7 +781,7 @@ server.registerTool('get_board_reference', {
         { type: 'text' as const, text: `# ${status.board.displayName}\n\n${safeContent}` },
         {
           type: 'resource_link' as const,
-          uri: `file://${refPath}`,
+          uri: pathToFileURL(refPath).href,
           name: `${status.board.displayName} Reference`,
           description: 'Board API reference (Markdown)',
           mimeType: 'text/markdown',
@@ -1293,7 +1294,7 @@ server.registerTool('get_build_diagnostics', {
     // click-to-open actions on the returned resource).
     const fileResourceLink = {
       type: 'resource_link' as const,
-      uri: `file://${diagnostics.file}`,
+      uri: pathToFileURL(diagnostics.file).href,
       name: path.basename(diagnostics.file),
       description: `Source file: ${diagnostics.file}`,
       mimeType: 'text/x-ruby',
