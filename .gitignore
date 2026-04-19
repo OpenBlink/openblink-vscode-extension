@@ -18,9 +18,6 @@ extract/
 .DS_Store
 Thumbs.db
 
-# MCP IPC directory (runtime state, not tracked)
-.openblink/
-
 # User workspace files (for testing)
 app.rb
 *.mrb
