@@ -12,7 +12,8 @@
  * (Windsurf Cascade, VS Code Copilot, Cursor, Cline, etc.).
  *
  * Communication with the extension happens through JSON files in the
- * `.openblink/` directory at the workspace root (file-based IPC):
+ * extension's VS Code workspaceStorage `ipc/` subdirectory (file-based IPC).
+ * The absolute path is passed via the `OPENBLINK_IPC_DIR` environment variable:
  *
  *   - Reads  `status.json`  for device info and metrics.
  *   - Reads  `openblink-console.log` for device console output.
@@ -47,6 +48,30 @@ import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+
+// ============================================================================
+// Debug Logging
+// ============================================================================
+
+/**
+ * @brief Debug flag toggled by the `OPENBLINK_MCP_DEBUG` environment variable.
+ *
+ * Set `OPENBLINK_MCP_DEBUG=1` (or `true`) in the MCP server env block of your
+ * IDE's MCP configuration to enable verbose stderr logging.  Debug output is
+ * visible in the MCP client's error stream and is invaluable when diagnosing
+ * IPC timeouts, missing files, or race conditions.
+ */
+const DEBUG = (() => {
+  const v = (process.env.OPENBLINK_MCP_DEBUG ?? '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+})();
+
+/** @brief Write a debug line to stderr when `OPENBLINK_MCP_DEBUG` is enabled. */
+function debug(msg: string): void {
+  if (DEBUG) {
+    process.stderr.write(`[openblink-mcp] ${new Date().toISOString()} ${msg}\n`);
+  }
+}
 
 // ============================================================================
 // Error Codes and Structured Responses
@@ -154,30 +179,37 @@ declare const EXTENSION_VERSION: string;
 // ============================================================================
 
 /**
- * @brief Resolve the `.openblink/` IPC directory path.
+ * @brief Resolve the IPC directory path shared with the extension.
  *
- * The workspace root is passed as the `OPENBLINK_WORKSPACE` environment
- * variable by the extension when it launches the MCP server.
+ * The absolute IPC directory is passed as the `OPENBLINK_IPC_DIR` environment
+ * variable by the extension when it launches the MCP server.  The extension
+ * points this at its workspaceStorage (`<storageUri>/ipc`) so no files are
+ * written into the user's workspace tree.
  */
 function getIpcDir(): string {
-  const workspace = process.env.OPENBLINK_WORKSPACE;
-  if (!workspace) {
-    throw new Error('OPENBLINK_WORKSPACE environment variable is not set');
+  const ipcDir = process.env.OPENBLINK_IPC_DIR;
+  if (!ipcDir) {
+    throw new Error('OPENBLINK_IPC_DIR environment variable is not set');
   }
   // Reject relative paths before resolving to prevent path traversal
-  if (!path.isAbsolute(workspace)) {
-    throw new Error('OPENBLINK_WORKSPACE must be an absolute path');
+  if (!path.isAbsolute(ipcDir)) {
+    throw new Error('OPENBLINK_IPC_DIR must be an absolute path');
   }
-  const resolved = path.resolve(workspace);
-  return path.join(resolved, '.openblink');
+  return path.resolve(ipcDir);
 }
 
 /** @brief Safely read and parse a JSON file.  Returns `null` on any error. */
 function readJsonFile<T>(filePath: string): T | null {
   try {
     if (!fs.existsSync(filePath)) { return null; }
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    // Guard against transient truncated reads in case the writer did NOT use
+    // atomic rename.  The extension bridge DOES use atomic rename, so this is
+    // primarily defensive for older extensions.
+    if (raw.length === 0) { return null; }
+    return JSON.parse(raw);
+  } catch (err) {
+    debug(`readJsonFile(${path.basename(filePath)}) error: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -187,23 +219,49 @@ function readTextFile(filePath: string): string | null {
   try {
     if (!fs.existsSync(filePath)) { return null; }
     return fs.readFileSync(filePath, 'utf-8');
-  } catch {
+  } catch (err) {
+    debug(`readTextFile(${path.basename(filePath)}) error: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
 
-/** @brief Safely write a JSON file to the IPC directory. */
+/**
+ * @brief Atomically write a JSON file using a temp file + rename.
+ *
+ * Using `rename` — atomic on the same filesystem — guarantees the
+ * extension's file watcher never reads a partially-written request
+ * file.  Without this, a writer interrupted mid-flight would cause the
+ * watcher to `JSON.parse` garbage, silently drop the request, and the
+ * tool would time out.
+ */
 function writeJsonFile<T>(filePath: string, data: T): boolean {
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, filePath);
+    debug(`wrote ${path.basename(filePath)} (${JSON.stringify(data).length} chars)`);
     return true;
-  } catch {
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    debug(`writeJsonFile(${path.basename(filePath)}) error: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
 }
 
-/** @brief Poll for a result file with timeout and optional cancellation check. */
+/**
+ * @brief Poll for a result file with timeout and optional cancellation check.
+ *
+ * Iteration notes:
+ *   - On each tick, reads the result file and checks `idField === requestId`.
+ *     If a stale result file (from a previous request) is present, this
+ *     check skips it without deleting so it can be reconciled later.
+ *   - `fs.unlinkSync` is called once the matching result is found to make
+ *     room for the next request; failures (e.g. concurrent unlink by the
+ *     extension) are ignored.
+ *   - Cancellation is evaluated *before* each sleep and again *after*, so
+ *     a cancel request is observed within one poll interval.
+ */
 async function pollForResult<T>(
   resultPath: string,
   timeout: number,
@@ -212,18 +270,30 @@ async function pollForResult<T>(
   idField: keyof T,
   isCancelled?: () => boolean,
 ): Promise<T | null> {
+  debug(`pollForResult: waiting for ${requestId} at ${path.basename(resultPath)} (timeout=${timeout}ms, interval=${pollInterval}ms)`);
   const start = Date.now();
+  let iterations = 0;
+  let sawForeignResult = false;
   while (Date.now() - start < timeout) {
     if (isCancelled?.()) {
+      debug(`pollForResult: cancelled (${requestId})`);
       return null;
     }
     await new Promise(resolve => setTimeout(resolve, pollInterval));
+    iterations++;
     const result = readJsonFile<T>(resultPath);
-    if (result && (result[idField] as unknown) === requestId) {
-      try { fs.unlinkSync(resultPath); } catch { /* ignore */ }
-      return result;
+    if (result) {
+      if ((result[idField] as unknown) === requestId) {
+        try { fs.unlinkSync(resultPath); } catch { /* ignore */ }
+        debug(`pollForResult: matched ${requestId} in ${Date.now() - start}ms (${iterations} polls)`);
+        return result;
+      } else if (!sawForeignResult) {
+        sawForeignResult = true;
+        debug(`pollForResult: saw foreign result (${String((result as Record<string, unknown>)[idField as string])}) while waiting for ${requestId}`);
+      }
     }
   }
+  debug(`pollForResult: TIMEOUT ${requestId} after ${timeout}ms (${iterations} polls, foreignResult=${sawForeignResult})`);
   return null;
 }
 
@@ -315,6 +385,15 @@ server.registerTool('build_and_blink', {
       'Increase this for large files or slow connections.'
     ),
   },
+  outputSchema: {
+    requestId: z.string().describe('Unique request identifier for this build'),
+    success: z.boolean().describe('Whether the build and transfer succeeded'),
+    compileTime: z.number().optional().describe('Compilation time in milliseconds'),
+    transferTime: z.number().optional().describe('BLE transfer time in milliseconds'),
+    programSize: z.number().optional().describe('Compiled program size in bytes'),
+    compiledWithoutTransfer: z.boolean().optional().describe('True when compilation succeeded but no device was connected'),
+    error: z.string().optional().describe('Human-readable error message on failure'),
+  },
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -322,6 +401,7 @@ server.registerTool('build_and_blink', {
     openWorldHint: false,
   },
 }, async ({ file, timeout: customTimeout }) => {
+    debug(`build_and_blink: entered (file=${file ?? '(default)'}, timeout=${customTimeout ?? 'default'})`);
     // Validate file path
     if (file !== undefined) {
       const hasParentSegment = file
@@ -353,6 +433,7 @@ server.registerTool('build_and_blink', {
     }
 
     const requestId = `build_${randomUUID()}`;
+    debug(`build_and_blink: requestId=${requestId}`);
     registerOperation(requestId);
 
     try {
@@ -407,7 +488,17 @@ server.registerTool('build_and_blink', {
           result.compiledWithoutTransfer ? 'Note: Compiled successfully but device was not connected.' : null,
           `Next: Use get_console_output to check device runtime output.`,
         ].filter(Boolean);
-        return { content: [{ type: 'text' as const, text: parts.join('\n') }] };
+        return {
+          content: [{ type: 'text' as const, text: parts.join('\n') }],
+          structuredContent: {
+            requestId,
+            success: true,
+            ...(result.compileTime !== undefined ? { compileTime: result.compileTime } : {}),
+            ...(result.transferTime !== undefined ? { transferTime: result.transferTime } : {}),
+            ...(result.programSize !== undefined ? { programSize: result.programSize } : {}),
+            ...(result.compiledWithoutTransfer ? { compiledWithoutTransfer: true } : {}),
+          },
+        };
       } else {
         // Map extension error to appropriate error code
         const errorCode = result.errorCode ?? ErrorCode.COMPILATION_FAILED;
@@ -436,6 +527,13 @@ server.registerTool('get_device_info', {
     'Returns connection state (disconnected/connecting/connected/reconnecting), device name, device ID, and negotiated MTU. ' +
     'Call this to check if a device is connected before running build_and_blink.',
   inputSchema: {},
+  outputSchema: {
+    available: z.boolean().describe('Whether extension status data is available'),
+    state: z.string().optional().describe('Connection state: disconnected | connecting | connected | reconnecting'),
+    deviceName: z.string().nullable().optional().describe('Advertised local name of the connected device'),
+    deviceId: z.string().nullable().optional().describe('Noble peripheral identifier of the connected device'),
+    mtu: z.number().optional().describe('Negotiated BLE MTU in bytes'),
+  },
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -444,12 +542,17 @@ server.registerTool('get_device_info', {
   },
 }, async () => {
     const dir = getIpcDir();
+    debug(`get_device_info: reading status.json from ${dir}`);
     const status = readJsonFile<{ connection: { state: string; deviceName: string | null; deviceId: string | null; mtu: number } }>(
       path.join(dir, 'status.json'),
     );
 
     if (!status) {
-      return { content: [{ type: 'text' as const, text: 'No status available. Is the OpenBlink extension running with MCP enabled?' }] };
+      debug('get_device_info: status.json missing or unreadable');
+      return {
+        content: [{ type: 'text' as const, text: 'No status available. Is the OpenBlink extension running with MCP enabled?' }],
+        structuredContent: { available: false },
+      };
     }
 
     const c = status.connection;
@@ -459,7 +562,16 @@ server.registerTool('get_device_info', {
       `Device ID: ${c.deviceId ?? '(none)'}`,
       `MTU: ${c.mtu}`,
     ];
-    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    return {
+      content: [{ type: 'text' as const, text: lines.join('\n') }],
+      structuredContent: {
+        available: true,
+        state: c.state,
+        deviceName: c.deviceName,
+        deviceId: c.deviceId,
+        mtu: c.mtu,
+      },
+    };
   },
 );
 
@@ -485,15 +597,24 @@ server.registerTool('get_console_output', {
   },
 }, async ({ lines: maxLines }) => {
     const dir = getIpcDir();
-    const raw = readTextFile(path.join(dir, 'openblink-console.log'));
+    const logPath = path.join(dir, 'openblink-console.log');
+    debug(`get_console_output: reading ${logPath} (maxLines=${maxLines ?? 'default'})`);
+    const raw = readTextFile(logPath);
 
-    if (!raw || raw.trim().length === 0) {
+    if (raw === null) {
+      debug('get_console_output: file does not exist (extension has not written any console output yet, or MCP is disabled)');
+      return { content: [{ type: 'text' as const, text: 'No console output available. The extension has not recorded any device output yet.' }] };
+    }
+    if (raw.trim().length === 0) {
+      debug('get_console_output: file is empty');
       return { content: [{ type: 'text' as const, text: 'No console output available.' }] };
     }
 
     let logLines = raw.split('\n').filter(l => l.length > 0);
+    const totalLines = logLines.length;
     const cap = (maxLines !== undefined && maxLines > 0) ? maxLines : 100;
     logLines = logLines.slice(-cap);
+    debug(`get_console_output: returning ${logLines.length}/${totalLines} lines (${raw.length} bytes)`);
 
     return { content: [{ type: 'text' as const, text: logLines.join('\n') }] };
   },
@@ -509,6 +630,31 @@ server.registerTool('get_metrics', {
     'Returns the latest compile time, transfer time, program size, and min/avg/max statistics across recent builds. ' +
     'Unlike build_and_blink (which returns only the current build metrics), this shows historical performance trends.',
   inputSchema: {},
+  outputSchema: {
+    available: z.boolean().describe('Whether metrics data is available'),
+    latest: z.object({
+      compileTime: z.number().optional().describe('Latest compile time in milliseconds'),
+      transferTime: z.number().optional().describe('Latest BLE transfer time in milliseconds'),
+      programSize: z.number().optional().describe('Latest compiled program size in bytes'),
+    }).optional(),
+    stats: z.object({
+      compile: z.object({
+        min: z.number().nullable(),
+        avg: z.number().nullable(),
+        max: z.number().nullable(),
+      }).describe('Compile time statistics (milliseconds)'),
+      transfer: z.object({
+        min: z.number().nullable(),
+        avg: z.number().nullable(),
+        max: z.number().nullable(),
+      }).describe('Transfer time statistics (milliseconds)'),
+      size: z.object({
+        min: z.number().nullable(),
+        avg: z.number().nullable(),
+        max: z.number().nullable(),
+      }).describe('Program size statistics (bytes)'),
+    }).optional(),
+  },
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -529,7 +675,10 @@ server.registerTool('get_metrics', {
     }>(path.join(dir, 'status.json'));
 
     if (!status) {
-      return { content: [{ type: 'text' as const, text: 'No metrics available. Is the OpenBlink extension running with MCP enabled?' }] };
+      return {
+        content: [{ type: 'text' as const, text: 'No metrics available. Is the OpenBlink extension running with MCP enabled?' }],
+        structuredContent: { available: false },
+      };
     }
 
     const m = status.metrics;
@@ -549,7 +698,14 @@ server.registerTool('get_metrics', {
       `Transfer: ${fmtStat(m.stats.transfer, 'ms')}`,
       `Size: ${fmtStat(m.stats.size, 'bytes')}`,
     ];
-    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    return {
+      content: [{ type: 'text' as const, text: lines.join('\n') }],
+      structuredContent: {
+        available: true,
+        latest: m.latest,
+        stats: m.stats,
+      },
+    };
   },
 );
 
@@ -616,7 +772,21 @@ server.registerTool('get_board_reference', {
     const safeContent = refContent.length > MAX_REF_SIZE
       ? refContent.slice(0, MAX_REF_SIZE) + '\n\n[Truncated — content exceeds 50 KB limit]'
       : refContent;
-    return { content: [{ type: 'text' as const, text: `# ${status.board.displayName}\n\n${safeContent}` }] };
+
+    // Expose the reference file as a resource_link so MCP clients can open
+    // the raw Markdown in a separate view when desired (VS Code 1.103+).
+    return {
+      content: [
+        { type: 'text' as const, text: `# ${status.board.displayName}\n\n${safeContent}` },
+        {
+          type: 'resource_link' as const,
+          uri: `file://${refPath}`,
+          name: `${status.board.displayName} Reference`,
+          description: 'Board API reference (Markdown)',
+          mimeType: 'text/markdown',
+        },
+      ],
+    };
   },
 );
 
@@ -742,6 +912,14 @@ server.registerTool('scan_devices', {
       'Scan duration in milliseconds (default: 10000, min: 3000, max: 30000)'
     ),
   },
+  outputSchema: {
+    success: z.boolean().describe('Whether the scan completed successfully'),
+    devices: z.array(z.object({
+      id: z.string().describe('BLE device identifier'),
+      name: z.string().describe('Advertised device name'),
+      rssi: z.number().optional().describe('Signal strength in dBm, if available'),
+    })).describe('Discovered devices'),
+  },
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -794,7 +972,10 @@ server.registerTool('scan_devices', {
 
       if (result.success && result.devices) {
         if (result.devices.length === 0) {
-          return { content: [{ type: 'text' as const, text: 'No OpenBlink devices found nearby. Ensure the device is powered on and in range.' }] };
+          return {
+            content: [{ type: 'text' as const, text: 'No OpenBlink devices found nearby. Ensure the device is powered on and in range.' }],
+            structuredContent: { success: true, devices: [] },
+          };
         }
         const lines = [
           `Found ${result.devices.length} device(s):`,
@@ -802,7 +983,10 @@ server.registerTool('scan_devices', {
           '',
           'Use connect_device with the device ID to connect.',
         ];
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }],
+          structuredContent: { success: true, devices: result.devices },
+        };
       } else {
         return formatErrorResponse(createError(ErrorCode.BLE_NOT_AVAILABLE, 'Scan failed', result.error));
       }
@@ -1054,6 +1238,20 @@ server.registerTool('get_build_diagnostics', {
     'Returns syntax errors, line numbers, column positions, and suggested fixes. ' +
     'Use this after build_and_blink fails to understand what went wrong.',
   inputSchema: {},
+  outputSchema: {
+    available: z.boolean().describe('Whether diagnostic data is available'),
+    timestamp: z.string().optional().describe('ISO 8601 timestamp of the build'),
+    file: z.string().optional().describe('Source file path of the build'),
+    success: z.boolean().optional().describe('Whether the last build succeeded'),
+    errors: z.array(z.object({
+      line: z.number(),
+      column: z.number(),
+      message: z.string(),
+      severity: z.enum(['error', 'warning']),
+      code: z.string().optional(),
+    })).optional().describe('Error details, if any'),
+    suggestions: z.array(z.string()).optional().describe('Suggested fixes'),
+  },
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -1084,11 +1282,38 @@ server.registerTool('get_build_diagnostics', {
     }>(path.join(dir, 'build-diagnostics.json'));
 
     if (!diagnostics) {
-      return { content: [{ type: 'text' as const, text: 'No build diagnostics available. Run build_and_blink first.' }] };
+      return {
+        content: [{ type: 'text' as const, text: 'No build diagnostics available. Run build_and_blink first.' }],
+        structuredContent: { available: false },
+      };
     }
 
+    // Build a resource_link to the source file so MCP clients can open it
+    // directly (VS Code 1.103+ handles this by offering drag-into-chat and
+    // click-to-open actions on the returned resource).
+    const fileResourceLink = {
+      type: 'resource_link' as const,
+      uri: `file://${diagnostics.file}`,
+      name: path.basename(diagnostics.file),
+      description: `Source file: ${diagnostics.file}`,
+      mimeType: 'text/x-ruby',
+    };
+
     if (diagnostics.success) {
-      return { content: [{ type: 'text' as const, text: `Last build (${diagnostics.file}) was successful.` }] };
+      return {
+        content: [
+          { type: 'text' as const, text: `Last build (${diagnostics.file}) was successful.` },
+          fileResourceLink,
+        ],
+        structuredContent: {
+          available: true,
+          timestamp: diagnostics.timestamp,
+          file: diagnostics.file,
+          success: true,
+          errors: [],
+          suggestions: diagnostics.suggestions ?? [],
+        },
+      };
     }
 
     const lines = [
@@ -1111,7 +1336,20 @@ server.registerTool('get_build_diagnostics', {
       }
     }
 
-    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    return {
+      content: [
+        { type: 'text' as const, text: lines.join('\n') },
+        fileResourceLink,
+      ],
+      structuredContent: {
+        available: true,
+        timestamp: diagnostics.timestamp,
+        file: diagnostics.file,
+        success: false,
+        errors: diagnostics.errors,
+        suggestions: diagnostics.suggestions ?? [],
+      },
+    };
   },
 );
 
@@ -1125,6 +1363,17 @@ server.registerTool('get_build_status', {
     'Returns whether a build is in progress, the last build result, and queue information. ' +
     'Use this to check if you can start a new build or to see if a previous build completed.',
   inputSchema: {},
+  outputSchema: {
+    available: z.boolean().describe('Whether build status data is available'),
+    isBuilding: z.boolean().optional().describe('Whether a build is currently in progress'),
+    queueLength: z.number().optional().describe('Number of pending builds in queue'),
+    lastBuild: z.object({
+      requestId: z.string(),
+      success: z.boolean(),
+      timestamp: z.string(),
+      file: z.string(),
+    }).nullable().optional().describe('Information about the last build'),
+  },
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -1158,7 +1407,10 @@ server.registerTool('get_build_status', {
       );
 
       if (!basicStatus) {
-        return { content: [{ type: 'text' as const, text: 'No build status available. Is the extension running?' }] };
+        return {
+          content: [{ type: 'text' as const, text: 'No build status available. Is the extension running?' }],
+          structuredContent: { available: false },
+        };
       }
 
       const lines = ['Build Status:'];
@@ -1167,7 +1419,10 @@ server.registerTool('get_build_status', {
       } else {
         lines.push('  No builds have been run yet.');
       }
-      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      return {
+        content: [{ type: 'text' as const, text: lines.join('\n') }],
+        structuredContent: { available: true, isBuilding: false, queueLength: 0, lastBuild: null },
+      };
     }
 
     const lines = ['Build Status:'];
@@ -1182,7 +1437,15 @@ server.registerTool('get_build_status', {
       lines.push('  Last build: None');
     }
 
-    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    return {
+      content: [{ type: 'text' as const, text: lines.join('\n') }],
+      structuredContent: {
+        available: true,
+        isBuilding: status.isBuilding,
+        queueLength: status.queueLength,
+        lastBuild: status.lastBuild,
+      },
+    };
   },
 );
 
@@ -1274,8 +1537,25 @@ process.on('unhandledRejection', (reason) => {
 });
 
 async function main(): Promise<void> {
+  // Validate IPC directory early so any misconfiguration (missing env var,
+  // relative path, non-existent directory) is surfaced at startup rather
+  // than on the first tool invocation.
+  try {
+    const dir = getIpcDir();
+    debug(`starting with OPENBLINK_IPC_DIR=${dir}`);
+    if (!fs.existsSync(dir)) {
+      debug(`IPC directory does not exist yet (will be created by extension): ${dir}`);
+    }
+  } catch (err) {
+    process.stderr.write(`OpenBlink MCP server: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write('OpenBlink MCP server: set OPENBLINK_IPC_DIR to an absolute path pointing at the extension\'s IPC directory.\n');
+    process.exit(1);
+  }
+
+  debug(`starting MCP server (version=${EXTENSION_VERSION}, debug=${DEBUG})`);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  debug('MCP server ready (stdio transport connected)');
 }
 
 main().catch((error) => {

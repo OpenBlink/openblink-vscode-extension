@@ -844,14 +844,63 @@ export class BoardReferenceTreeProvider implements vscode.TreeDataProvider<vscod
 // ============================================================================
 
 /**
+ * @brief Execution state of an MCP history entry.
+ *
+ * - `pending`  — Request received; handler is still running.
+ * - `success`  — Handler completed and the operation succeeded.
+ * - `failed`   — Handler completed but the operation failed (or threw).
+ */
+export type McpHistoryStatus = 'pending' | 'success' | 'failed';
+
+/**
+ * @brief A single AI-agent-initiated operation recorded in the MCP status view.
+ *
+ * One entry is appended per `trigger.json` or `command.json` observed by the
+ * extension.  Entries start in `pending` and transition to `success`/`failed`
+ * once the handler writes its `result.json` / `command-result.json`.
+ */
+export interface McpHistoryEntry {
+  /** @brief When the request was first observed by the extension. */
+  timestamp: Date;
+  /** @brief MCP tool or command name (e.g. `build_and_blink`, `scan_devices`). */
+  tool: string;
+  /** @brief Request ID used to correlate the request with its result. */
+  requestId: string;
+  /** @brief Short human-readable parameter summary (e.g. `app.rb`, `deviceId=AA:BB`). */
+  summary: string;
+  /** @brief Current execution state. */
+  status: McpHistoryStatus;
+  /** @brief Optional detail shown in the tooltip (success details or error message). */
+  detail?: string;
+  /** @brief End-to-end wall-clock duration in milliseconds (set on completion). */
+  durationMs?: number;
+}
+
+/** @brief Section header under which history entries appear as children. */
+class McpHistorySectionItem extends vscode.TreeItem {
+  constructor(count: number) {
+    super(`${l10n.t('History')} (${count})`, vscode.TreeItemCollapsibleState.Collapsed);
+    this.iconPath = new vscode.ThemeIcon('history');
+    this.contextValue = 'mcpHistorySection';
+  }
+}
+
+/**
  * @brief TreeDataProvider that displays MCP integration status in the sidebar.
  *
  * Shows whether MCP is enabled, IPC file activity timestamps, the last
- * build request received from the MCP server, and the last build result.
+ * build request received from the MCP server, and a rolling history of
+ * AI-agent-initiated tool invocations.
+ *
+ * The history section is rendered as a **collapsible** group so it does
+ * not interrupt the top-level status summary; users expand it on demand.
  */
 export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  /** @brief Maximum history entries retained in memory. */
+  private static readonly MAX_HISTORY = 50;
 
   private mcpEnabled = true;
   private lastTriggerTime: Date | null = null;
@@ -861,6 +910,8 @@ export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   private lastResultError: string | undefined;
   private lastStatusWriteTime: Date | null = null;
   private lastConsoleWriteTime: Date | null = null;
+  /** @brief Ring of most-recent AI-triggered operations, newest first. */
+  private history: McpHistoryEntry[] = [];
 
   /** @brief Trigger a tree view refresh. */
   refresh(): void { this._onDidChangeTreeData.fire(); }
@@ -890,14 +941,87 @@ export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     this.refresh();
   }
 
+  /**
+   * @brief Append a new (pending) history entry and refresh the tree view.
+   *
+   * Called when a `trigger.json` or `command.json` is received.  Use
+   * {@link updateHistoryEntry} with the same `requestId` to mark the
+   * entry as success/failed once the handler completes.
+   *
+   * @param entry  Tool/requestId/summary; timestamp and status are set
+   *               automatically (`status = 'pending'`).
+   */
+  addHistoryEntry(entry: Pick<McpHistoryEntry, 'tool' | 'requestId' | 'summary'>): void {
+    const full: McpHistoryEntry = {
+      ...entry,
+      timestamp: new Date(),
+      status: 'pending',
+    };
+    this.history.unshift(full);
+    if (this.history.length > McpStatusTreeProvider.MAX_HISTORY) {
+      this.history.splice(McpStatusTreeProvider.MAX_HISTORY);
+    }
+    this.refresh();
+  }
+
+  /**
+   * @brief Transition a pending history entry to success/failed.
+   *
+   * Looks up the entry by `requestId`; if not found (e.g. the ring has
+   * evicted it), the update is silently dropped.
+   */
+  updateHistoryEntry(
+    requestId: string,
+    update: Partial<Pick<McpHistoryEntry, 'status' | 'detail' | 'durationMs'>>,
+  ): void {
+    const entry = this.history.find(e => e.requestId === requestId);
+    if (!entry) { return; }
+    if (update.status !== undefined) { entry.status = update.status; }
+    if (update.detail !== undefined) { entry.detail = update.detail; }
+    if (update.durationMs !== undefined) { entry.durationMs = update.durationMs; }
+    this.refresh();
+  }
+
+  /** @brief Remove all history entries. */
+  clearHistory(): void {
+    this.history = [];
+    this.refresh();
+  }
+
+  /** @brief Snapshot the current history (for tests or diagnostics). */
+  getHistory(): ReadonlyArray<McpHistoryEntry> {
+    return this.history;
+  }
+
   /** @brief Return the tree item itself (no transformation needed). */
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 
   /**
-   * @brief Build the list of MCP status items for the view.
-   * @returns Array of tree items showing MCP integration state.
+   * @brief Build the tree structure for the MCP status view.
+   *
+   * - Top-level: enabled/disabled, file-write timestamps, last
+   *   request/result, and a collapsible `History (n)` section when any
+   *   entries exist.
+   * - Children of the history section: one item per logged invocation,
+   *   most recent first.
    */
-  getChildren(): vscode.TreeItem[] {
+  getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
+    if (!element) {
+      return this.buildTopLevel();
+    }
+    if (element.contextValue === 'mcpHistorySection') {
+      if (this.history.length === 0) {
+        const empty = new vscode.TreeItem(l10n.t('No MCP activity yet'));
+        empty.iconPath = new vscode.ThemeIcon('circle-slash');
+        return [empty];
+      }
+      return this.history.map(e => this.makeHistoryItem(e));
+    }
+    return [];
+  }
+
+  /** @brief Build the top-level (always-visible) tree items. */
+  private buildTopLevel(): vscode.TreeItem[] {
     const items: vscode.TreeItem[] = [];
 
     // MCP enabled/disabled
@@ -958,7 +1082,52 @@ export class McpStatusTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     }
     items.push(resultItem);
 
+    // History (collapsible, always visible).  Rendered as a child of the
+    // top-level list so users can see the section and its current count
+    // even before the first AI tool invocation; an empty placeholder is
+    // shown when `history.length === 0`.
+    items.push(new McpHistorySectionItem(this.history.length));
+
     return items;
+  }
+
+  /**
+   * @brief Build a single history entry's tree item.
+   *
+   * Label: `HH:MM:SS  <tool>`
+   * Description: `<summary>  (<durationMs>ms)`
+   * Tooltip: detail (success info or error message)
+   * Icon: spinner (pending) / check (success) / error (failed)
+   */
+  private makeHistoryItem(entry: McpHistoryEntry): vscode.TreeItem {
+    const timeStr = entry.timestamp.toLocaleTimeString();
+    const item = new vscode.TreeItem(`${timeStr}  ${entry.tool}`);
+
+    if (entry.status === 'pending') {
+      item.iconPath = new vscode.ThemeIcon('loading~spin');
+    } else if (entry.status === 'success') {
+      item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'));
+    } else {
+      item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
+    }
+
+    const parts: string[] = [];
+    if (entry.summary) { parts.push(entry.summary); }
+    if (entry.durationMs !== undefined) { parts.push(`${entry.durationMs}ms`); }
+    item.description = parts.join('  ');
+
+    const tooltipLines = [
+      `${entry.tool}`,
+      `Request ID: ${entry.requestId}`,
+      `Status: ${entry.status}`,
+    ];
+    if (entry.summary) { tooltipLines.push(`Params: ${entry.summary}`); }
+    if (entry.durationMs !== undefined) { tooltipLines.push(`Duration: ${entry.durationMs}ms`); }
+    if (entry.detail) { tooltipLines.push('', entry.detail); }
+    item.tooltip = tooltipLines.join('\n');
+
+    item.contextValue = `mcpHistoryItem-${entry.status}`;
+    return item;
   }
 
   /**
