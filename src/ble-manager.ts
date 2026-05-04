@@ -5,12 +5,11 @@
 
 import { EventEmitter } from 'vscode';
 import * as l10n from '@vscode/l10n';
-import type { Peripheral, Characteristic } from '@abandonware/noble';
+import type { Peripheral } from '@abandonware/noble';
 import {
   ConnectionState,
   DeviceInfo,
   NoblePeripheral,
-  NobleService,
   NobleCharacteristic,
   BLE_CONSTANTS,
   getBleScanTimeout,
@@ -382,41 +381,30 @@ export class BleManager {
     // Register disconnect handler immediately to avoid missing events during setup
     device.once('disconnect', () => this.handleDisconnect());
 
-    // Discover services
-    const services = await device.discoverServicesAsync();
-    const openBlinkService = services.find(
-      (s) => s.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_SERVICE_UUID
-    ) as NobleService | undefined;
+    // Discover services and characteristics in one call
+    const { characteristics } = await device.discoverSomeServicesAndCharacteristicsAsync(
+      [BLE_CONSTANTS.OPENBLINK_SERVICE_UUID],
+      [
+        BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID,
+        BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID,
+        BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID,
+      ]
+    );
 
-    if (!openBlinkService) {
-      throw new Error(l10n.t('OpenBlink service not found'));
-    }
+    this.consoleCharacteristic =
+      (characteristics.find(
+        (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID
+      ) as NobleCharacteristic | undefined) ?? null;
 
-    // Discover characteristics
-    const characteristics = await new Promise<Characteristic[]>((resolve, reject) => {
-      const onDiscover = (chars: Characteristic[]) => {
-        clearTimeout(timer);
-        resolve(chars);
-      };
-      const timer = setTimeout(() => {
-        openBlinkService.removeListener('characteristicsDiscover', onDiscover);
-        reject(new Error(l10n.t('Required characteristics not found')));
-      }, BLE_CONSTANTS.CHARACTERISTIC_DISCOVERY_TIMEOUT); // Not configurable - GATT protocol timing
-      openBlinkService.once('characteristicsDiscover', onDiscover);
-      openBlinkService.discoverCharacteristics();
-    });
+    this.programCharacteristic =
+      (characteristics.find(
+        (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID
+      ) as NobleCharacteristic | undefined) ?? null;
 
-    this.consoleCharacteristic = characteristics.find(
-      (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID
-    ) as NobleCharacteristic | undefined ?? null;
-
-    this.programCharacteristic = characteristics.find(
-      (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID
-    ) as NobleCharacteristic | undefined ?? null;
-
-    this.negotiatedMtuCharacteristic = characteristics.find(
-      (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID
-    ) as NobleCharacteristic | undefined ?? null;
+    this.negotiatedMtuCharacteristic =
+      (characteristics.find(
+        (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID
+      ) as NobleCharacteristic | undefined) ?? null;
 
     if (!this.consoleCharacteristic || !this.programCharacteristic || !this.negotiatedMtuCharacteristic) {
       throw new Error(l10n.t('Required characteristics not found'));

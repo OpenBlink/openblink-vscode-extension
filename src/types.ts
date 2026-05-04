@@ -32,8 +32,12 @@ export interface DeviceInfo {
  * and adds `connectAsync`, `disconnectAsync`, `updateRssiAsync`, and optional
  * `gatt.requestMTU` for MTU negotiation.
  */
-export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync'> & {
+export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync' | 'discoverSomeServicesAndCharacteristicsAsync'> & {
   discoverServicesAsync: () => Promise<NobleService[]>;
+  discoverSomeServicesAndCharacteristicsAsync: (
+    serviceUUIDs: string[],
+    characteristicUUIDs: string[]
+  ) => Promise<{ services: NobleService[]; characteristics: NobleCharacteristic[] }>;
   connectAsync: () => Promise<void>;
   disconnectAsync: () => Promise<void>;
   updateRssiAsync: () => Promise<number>;
@@ -240,8 +244,6 @@ export const BLE_CONSTANTS = {
   SCAN_TIMEOUT: 10000,
   /** @brief Timeout for the GATT connectAsync() call (ms). */
   CONNECTION_TIMEOUT: 10000,
-  /** @brief Timeout for GATT characteristic discovery after service discovery (ms). */
-  CHARACTERISTIC_DISCOVERY_TIMEOUT: 5000,
   /** @brief Timeout for the Bluetooth adapter to reach "poweredOn" state (ms). */
   BLUETOOTH_INIT_TIMEOUT: 15000,
   /** @brief Extra time added to SCAN_TIMEOUT when waiting for a saved device to appear (ms). */
