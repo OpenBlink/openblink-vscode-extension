@@ -29,17 +29,20 @@ export interface DeviceInfo {
  * @brief Extended Noble Peripheral type with async helper methods.
  *
  * Overrides `discoverServicesAsync` to return {@link NobleService} instances
- * and adds `connectAsync`, `disconnectAsync`, `updateRssiAsync`, and optional
- * `gatt.requestMTU` for MTU negotiation.
+ * and adds `connectAsync`, `disconnectAsync`, `updateRssiAsync`, and
+ * `discoverSomeServicesAndCharacteristicsAsync` for efficient GATT discovery.
  */
-export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync'> & {
+export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync' | 'discoverSomeServicesAndCharacteristicsAsync'> & {
+  /** @brief Negotiated ATT MTU value (Linux only; null on macOS/Windows). */
+  mtu?: number | null;
   discoverServicesAsync: () => Promise<NobleService[]>;
+  discoverSomeServicesAndCharacteristicsAsync: (
+    serviceUUIDs: string[],
+    characteristicUUIDs: string[]
+  ) => Promise<{ services: NobleService[]; characteristics: NobleCharacteristic[] }>;
   connectAsync: () => Promise<void>;
   disconnectAsync: () => Promise<void>;
   updateRssiAsync: () => Promise<number>;
-  gatt?: {
-    requestMTU: (mtu: number) => Promise<number>;
-  };
 };
 
 /**
@@ -224,8 +227,8 @@ export const BLE_CONSTANTS = {
 
   /** @brief Default MTU used when negotiation fails or is unavailable (bytes). */
   DEFAULT_MTU: 20,
-  /** @brief MTU value requested during GATT-level negotiation (bytes). */
-  REQUESTED_MTU: 512,
+  /** @brief BLE keep-alive heartbeat interval in milliseconds (0 = disabled). */
+  HEARTBEAT_INTERVAL: 3000,
   /** @brief Size of the header prepended to each Data ('D') packet (bytes). */
   DATA_HEADER_SIZE: 6,
   /** @brief Size of the Program ('P') header packet (bytes). */
@@ -240,8 +243,6 @@ export const BLE_CONSTANTS = {
   SCAN_TIMEOUT: 10000,
   /** @brief Timeout for the GATT connectAsync() call (ms). */
   CONNECTION_TIMEOUT: 10000,
-  /** @brief Timeout for GATT characteristic discovery after service discovery (ms). */
-  CHARACTERISTIC_DISCOVERY_TIMEOUT: 5000,
   /** @brief Timeout for the Bluetooth adapter to reach "poweredOn" state (ms). */
   BLUETOOTH_INIT_TIMEOUT: 15000,
   /** @brief Extra time added to SCAN_TIMEOUT when waiting for a saved device to appear (ms). */
@@ -297,19 +298,19 @@ export function getBleInitialReconnectDelay(): number {
 }
 
 /**
- * @brief Get the configured requested MTU from VS Code settings.
- * @returns Requested MTU in bytes (default: 512).
- */
-export function getBleRequestedMtu(): number {
-  return vscode.workspace.getConfiguration('openblink.ble').get<number>('requestedMtu', 512);
-}
-
-/**
  * @brief Get the configured default MTU from VS Code settings.
  * @returns Default MTU in bytes (default: 20).
  */
 export function getBleDefaultMtu(): number {
   return vscode.workspace.getConfiguration('openblink.ble').get<number>('defaultMtu', 20);
+}
+
+/**
+ * @brief Get the configured BLE heartbeat interval from VS Code settings.
+ * @returns Heartbeat interval in milliseconds (default: 3000, 0 = disabled).
+ */
+export function getBleHeartbeatInterval(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('heartbeatInterval', 3000);
 }
 
 /**

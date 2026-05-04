@@ -19,7 +19,7 @@ jobs:
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 5.0.5
+          version: 5.0.7
 
       - name: Verify Emscripten
         run: emcc --version
@@ -62,10 +62,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js 20
+      - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           architecture: ${{ matrix.node_arch || '' }}
           cache: 'npm'
 
@@ -133,10 +133,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Use Node.js 20
+      - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Download all VSIX artifacts
         uses: actions/download-artifact@v4

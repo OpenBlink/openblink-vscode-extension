@@ -5,20 +5,19 @@
 
 import { EventEmitter } from 'vscode';
 import * as l10n from '@vscode/l10n';
-import type { Peripheral, Characteristic } from '@abandonware/noble';
+import type { Peripheral } from '@abandonware/noble';
 import {
   ConnectionState,
   DeviceInfo,
   NoblePeripheral,
-  NobleService,
   NobleCharacteristic,
   BLE_CONSTANTS,
   getBleScanTimeout,
   getBleConnectionTimeout,
   getBleMaxReconnectAttempts,
   getBleInitialReconnectDelay,
-  getBleRequestedMtu,
   getBleDefaultMtu,
+  getBleHeartbeatInterval,
 } from './types';
 
 /**
@@ -84,6 +83,10 @@ export class BleManager {
   private consoleCharacteristic: NobleCharacteristic | null = null;
   /** @brief BLE characteristic for reading the negotiated MTU. */
   private negotiatedMtuCharacteristic: NobleCharacteristic | null = null;
+  /** @brief Heartbeat timer for BLE keep-alive. */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** @brief Flag to pause heartbeat during firmware transfer. */
+  private _isTransferring = false;
   /** @brief Currently connected peripheral, or null if disconnected. */
   private currentDevice: NoblePeripheral | null = null;
   /** @brief Current connection state. */
@@ -135,6 +138,8 @@ export class BleManager {
   get connectionState(): ConnectionState { return this._connectionState; }
   /** @brief Negotiated BLE MTU size in bytes. */
   get negotiatedMTU(): number { return this._negotiatedMTU; }
+  /** @brief Set transferring flag to pause heartbeat during firmware transfer. */
+  set isTransferring(value: boolean) { this._isTransferring = value; }
   /** @brief Whether a device is currently connected and ready. */
   get isConnected(): boolean { return this._connectionState === 'connected' && this.currentDevice !== null; }
   /** @brief Whether a BLE scan is currently active. */
@@ -380,72 +385,72 @@ export class BleManager {
     this.currentDevice = device;
 
     // Register disconnect handler immediately to avoid missing events during setup
-    device.once('disconnect', () => this.handleDisconnect());
+    const disconnectHandler = () => this.handleDisconnect();
+    device.once('disconnect', disconnectHandler);
 
-    // Discover services
-    const services = await device.discoverServicesAsync();
-    const openBlinkService = services.find(
-      (s) => s.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_SERVICE_UUID
-    ) as NobleService | undefined;
+    try {
+      // Discover services and characteristics in one call
+      const { characteristics } = await device.discoverSomeServicesAndCharacteristicsAsync(
+        [BLE_CONSTANTS.OPENBLINK_SERVICE_UUID],
+        [
+          BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID,
+          BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID,
+          BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID,
+        ]
+      );
 
-    if (!openBlinkService) {
-      throw new Error(l10n.t('OpenBlink service not found'));
-    }
+      this.consoleCharacteristic =
+        (characteristics.find(
+          (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID
+        ) as NobleCharacteristic | undefined) ?? null;
 
-    // Discover characteristics
-    const characteristics = await new Promise<Characteristic[]>((resolve, reject) => {
-      const onDiscover = (chars: Characteristic[]) => {
-        clearTimeout(timer);
-        resolve(chars);
+      this.programCharacteristic =
+        (characteristics.find(
+          (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID
+        ) as NobleCharacteristic | undefined) ?? null;
+
+      this.negotiatedMtuCharacteristic =
+        (characteristics.find(
+          (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID
+        ) as NobleCharacteristic | undefined) ?? null;
+
+      if (!this.consoleCharacteristic || !this.programCharacteristic || !this.negotiatedMtuCharacteristic) {
+        throw new Error(l10n.t('Required characteristics not found'));
+      }
+
+      // Remove previous console listener to prevent duplicates on reconnect
+      this.removeConsoleListener();
+
+      // Setup console notifications
+      await this.consoleCharacteristic.subscribeAsync();
+      this.consoleDataHandler = (data: Buffer) => {
+        const value = new TextDecoder().decode(data);
+        this._onConsoleOutput.fire(value);
       };
-      const timer = setTimeout(() => {
-        openBlinkService.removeListener('characteristicsDiscover', onDiscover);
-        reject(new Error(l10n.t('Required characteristics not found')));
-      }, BLE_CONSTANTS.CHARACTERISTIC_DISCOVERY_TIMEOUT); // Not configurable - GATT protocol timing
-      openBlinkService.once('characteristicsDiscover', onDiscover);
-      openBlinkService.discoverCharacteristics();
-    });
+      this.consoleCharacteristic.on('data', this.consoleDataHandler);
 
-    this.consoleCharacteristic = characteristics.find(
-      (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID
-    ) as NobleCharacteristic | undefined ?? null;
+      // MTU negotiation
+      await this.negotiateMTU(device);
 
-    this.programCharacteristic = characteristics.find(
-      (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID
-    ) as NobleCharacteristic | undefined ?? null;
+      this.setConnectionState('connected');
+      this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
 
-    this.negotiatedMtuCharacteristic = characteristics.find(
-      (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID
-    ) as NobleCharacteristic | undefined ?? null;
-
-    if (!this.consoleCharacteristic || !this.programCharacteristic || !this.negotiatedMtuCharacteristic) {
-      throw new Error(l10n.t('Required characteristics not found'));
+      // Start keep-alive heartbeat
+      this.startKeepAlive();
+    } catch (error) {
+      // Remove disconnect listener on setup failure to prevent handleDisconnect from running
+      device.removeListener('disconnect', disconnectHandler);
+      throw error;
     }
-
-    // Remove previous console listener to prevent duplicates on reconnect
-    this.removeConsoleListener();
-
-    // Setup console notifications
-    await this.consoleCharacteristic.subscribeAsync();
-    this.consoleDataHandler = (data: Buffer) => {
-      const value = new TextDecoder().decode(data);
-      this._onConsoleOutput.fire(value);
-    };
-    this.consoleCharacteristic.on('data', this.consoleDataHandler);
-
-    // MTU negotiation
-    await this.negotiateMTU(device);
-
-    this.setConnectionState('connected');
-    this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
   }
 
   /**
    * @brief Negotiate the BLE MTU with the connected device.
    *
-   * Attempts GATT-level MTU negotiation first (`gatt.requestMTU`). If
-   * unavailable, falls back to reading the device's advertised MTU from
-   * the dedicated characteristic. On failure, resets to the configured default MTU.
+   * Uses Noble's standard `peripheral.mtu` (auto-negotiated on Linux) first.
+   * Falls back to reading the device's advertised MTU from the dedicated
+   * characteristic (Mac/Win where peripheral.mtu is null). On failure,
+   * resets to the configured default MTU.
    *
    * The final value is clamped to at least MIN_USABLE_MTU
    * to guarantee that data packets always carry at least one payload byte.
@@ -454,8 +459,10 @@ export class BleManager {
    */
   private async negotiateMTU(device: NoblePeripheral): Promise<void> {
     try {
-      if (device.gatt?.requestMTU) {
-        this._negotiatedMTU = await device.gatt.requestMTU(getBleRequestedMtu());
+      // 1. Noble standard: peripheral.mtu (Linux hci-socket auto-negotiates to 256)
+      if (device.mtu !== null && device.mtu > 0) {
+        this._negotiatedMTU = device.mtu - 3; // ATT_MTU - 3 (opcode + handle)
+      // 2. Fallback: read device-side MTU from characteristic (Mac/Win)
       } else if (this.negotiatedMtuCharacteristic) {
         const buffer = await this.negotiatedMtuCharacteristic.readAsync();
         if (buffer.length >= 2) {
@@ -476,6 +483,43 @@ export class BleManager {
   }
 
   /**
+   * @brief Send a heartbeat ping to keep the BLE connection alive.
+   *
+   * Reads from the MTU characteristic to maintain communication
+   * and prevent the BLE supervision timeout from expiring.
+   */
+  private async sendHeartbeat(): Promise<void> {
+    if (this._connectionState !== 'connected') return;
+    if (this.currentDevice?.state !== 'connected') return;
+    if (!this.negotiatedMtuCharacteristic || this._isTransferring) return;
+    try {
+      await this.negotiatedMtuCharacteristic.readAsync();
+    } catch (error) {
+      this.log(`[BLE] Heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * @brief Start the keep-alive heartbeat timer.
+   */
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    const interval = getBleHeartbeatInterval();
+    if (interval <= 0) return; // 0 = disabled
+    this.heartbeatTimer = setInterval(() => { void this.sendHeartbeat(); }, interval);
+  }
+
+  /**
+   * @brief Stop the keep-alive heartbeat timer.
+   */
+  private stopKeepAlive(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  /**
    * @brief Handle an unexpected or user-initiated disconnection.
    *
    * Resets characteristic references and MTU. If the disconnect was
@@ -483,6 +527,11 @@ export class BleManager {
    * automatic reconnection up to the configured max reconnect attempts.
    */
   private handleDisconnect(): void {
+    // Prevent duplicate execution if already disconnected or reconnecting
+    if (this._connectionState === 'disconnected' || this._connectionState === 'reconnecting') {
+      return;
+    }
+    this.stopKeepAlive();
     this.log(`[BLE] ${l10n.t('Device disconnected: {0}', this.deviceName)}`);
 
     this.removeConsoleListener();
@@ -530,6 +579,10 @@ export class BleManager {
         this.reconnectAttempts = 0;
         this.log(`[BLE] ${l10n.t('Reconnected successfully')}`);
       } catch {
+        // Clean up any partial BLE connection to avoid half-connected Noble state
+        if (this.currentDevice) {
+          try { await this.currentDevice.disconnectAsync(); } catch { /* ignore */ }
+        }
         if (this.reconnectAttempts < getBleMaxReconnectAttempts()) {
           this.attemptReconnect();
         } else {
@@ -549,6 +602,7 @@ export class BleManager {
    * the peripheral, and resets all internal state.
    */
   async disconnect(): Promise<void> {
+    this.stopKeepAlive();
     this.userInitiatedDisconnect = true;
     this.reconnectAttempts = getBleMaxReconnectAttempts();
 
@@ -608,6 +662,7 @@ export class BleManager {
    * emitter.  Called automatically when the extension deactivates.
    */
   async dispose(): Promise<void> {
+    this.stopKeepAlive();
     this._disposed = true;
     this.userInitiatedDisconnect = true;
     if (this.reconnectTimer) {

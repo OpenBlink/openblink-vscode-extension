@@ -4,7 +4,7 @@
   "description": "%description%",
   "version": "0.3.5",
   "engines": {
-    "vscode": "^1.96.0"
+    "vscode": "^1.102.0"
   },
   "license": "BSD-3-Clause",
   "repository": {
@@ -184,19 +184,19 @@
           "maximum": 10000,
           "description": "%config.ble.initialReconnectDelay%"
         },
-        "openblink.ble.requestedMtu": {
-          "type": "number",
-          "default": 512,
-          "minimum": 23,
-          "maximum": 1024,
-          "description": "%config.ble.requestedMtu%"
-        },
         "openblink.ble.defaultMtu": {
           "type": "number",
           "default": 20,
           "minimum": 7,
           "maximum": 512,
           "description": "%config.ble.defaultMtu%"
+        },
+        "openblink.ble.heartbeatInterval": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 0,
+          "maximum": 30000,
+          "description": "%config.ble.heartbeatInterval%"
         },
         "openblink.mcp.statusDebounce": {
           "type": "number",
@@ -324,7 +324,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.96.0",
+    "@types/vscode": "^1.102.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/l10n-dev": "^0.0.35",

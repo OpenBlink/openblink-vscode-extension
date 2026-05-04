@@ -814,6 +814,7 @@ async function buildAndBlinkInner(
   }
 
   const transferStart = performance.now();
+  bleManager.isTransferring = true;
   try {
     await sendFirmware(programChar, result.bytecode, currentSlot, bleManager.negotiatedMTU, (msg) => ui.log(msg));
     const transferTime = performance.now() - transferStart;
@@ -862,6 +863,8 @@ async function buildAndBlinkInner(
     });
 
     return { success: false, error: msg };
+  } finally {
+    bleManager.isTransferring = false;
   }
 }
 
