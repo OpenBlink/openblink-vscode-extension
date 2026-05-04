@@ -33,6 +33,8 @@ export interface DeviceInfo {
  * `discoverSomeServicesAndCharacteristicsAsync` for efficient GATT discovery.
  */
 export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync' | 'discoverSomeServicesAndCharacteristicsAsync'> & {
+  /** @brief Negotiated ATT MTU value (Linux only; null on macOS/Windows). */
+  mtu?: number | null;
   discoverServicesAsync: () => Promise<NobleService[]>;
   discoverSomeServicesAndCharacteristicsAsync: (
     serviceUUIDs: string[],

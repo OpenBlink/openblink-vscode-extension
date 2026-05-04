@@ -385,56 +385,63 @@ export class BleManager {
     this.currentDevice = device;
 
     // Register disconnect handler immediately to avoid missing events during setup
-    device.once('disconnect', () => this.handleDisconnect());
+    const disconnectHandler = () => this.handleDisconnect();
+    device.once('disconnect', disconnectHandler);
 
-    // Discover services and characteristics in one call
-    const { characteristics } = await device.discoverSomeServicesAndCharacteristicsAsync(
-      [BLE_CONSTANTS.OPENBLINK_SERVICE_UUID],
-      [
-        BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID,
-        BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID,
-        BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID,
-      ]
-    );
+    try {
+      // Discover services and characteristics in one call
+      const { characteristics } = await device.discoverSomeServicesAndCharacteristicsAsync(
+        [BLE_CONSTANTS.OPENBLINK_SERVICE_UUID],
+        [
+          BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID,
+          BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID,
+          BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID,
+        ]
+      );
 
-    this.consoleCharacteristic =
-      (characteristics.find(
-        (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID
-      ) as NobleCharacteristic | undefined) ?? null;
+      this.consoleCharacteristic =
+        (characteristics.find(
+          (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_CONSOLE_CHARACTERISTIC_UUID
+        ) as NobleCharacteristic | undefined) ?? null;
 
-    this.programCharacteristic =
-      (characteristics.find(
-        (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID
-      ) as NobleCharacteristic | undefined) ?? null;
+      this.programCharacteristic =
+        (characteristics.find(
+          (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_PROGRAM_CHARACTERISTIC_UUID
+        ) as NobleCharacteristic | undefined) ?? null;
 
-    this.negotiatedMtuCharacteristic =
-      (characteristics.find(
-        (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID
-      ) as NobleCharacteristic | undefined) ?? null;
+      this.negotiatedMtuCharacteristic =
+        (characteristics.find(
+          (c) => c.uuid.replace(/-/g, '') === BLE_CONSTANTS.OPENBLINK_MTU_CHARACTERISTIC_UUID
+        ) as NobleCharacteristic | undefined) ?? null;
 
-    if (!this.consoleCharacteristic || !this.programCharacteristic || !this.negotiatedMtuCharacteristic) {
-      throw new Error(l10n.t('Required characteristics not found'));
+      if (!this.consoleCharacteristic || !this.programCharacteristic || !this.negotiatedMtuCharacteristic) {
+        throw new Error(l10n.t('Required characteristics not found'));
+      }
+
+      // Remove previous console listener to prevent duplicates on reconnect
+      this.removeConsoleListener();
+
+      // Setup console notifications
+      await this.consoleCharacteristic.subscribeAsync();
+      this.consoleDataHandler = (data: Buffer) => {
+        const value = new TextDecoder().decode(data);
+        this._onConsoleOutput.fire(value);
+      };
+      this.consoleCharacteristic.on('data', this.consoleDataHandler);
+
+      // MTU negotiation
+      await this.negotiateMTU(device);
+
+      this.setConnectionState('connected');
+      this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
+
+      // Start keep-alive heartbeat
+      this.startKeepAlive();
+    } catch (error) {
+      // Remove disconnect listener on setup failure to prevent handleDisconnect from running
+      device.removeListener('disconnect', disconnectHandler);
+      throw error;
     }
-
-    // Remove previous console listener to prevent duplicates on reconnect
-    this.removeConsoleListener();
-
-    // Setup console notifications
-    await this.consoleCharacteristic.subscribeAsync();
-    this.consoleDataHandler = (data: Buffer) => {
-      const value = new TextDecoder().decode(data);
-      this._onConsoleOutput.fire(value);
-    };
-    this.consoleCharacteristic.on('data', this.consoleDataHandler);
-
-    // MTU negotiation
-    await this.negotiateMTU(device);
-
-    this.setConnectionState('connected');
-    this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
-
-    // Start keep-alive heartbeat
-    this.startKeepAlive();
   }
 
   /**
@@ -482,8 +489,9 @@ export class BleManager {
    * and prevent the BLE supervision timeout from expiring.
    */
   private async sendHeartbeat(): Promise<void> {
-    if (!this.negotiatedMtuCharacteristic || this._isTransferring) return;
+    if (this._connectionState !== 'connected') return;
     if (this.currentDevice?.state !== 'connected') return;
+    if (!this.negotiatedMtuCharacteristic || this._isTransferring) return;
     try {
       await this.negotiatedMtuCharacteristic.readAsync();
     } catch (error) {
@@ -519,6 +527,10 @@ export class BleManager {
    * automatic reconnection up to the configured max reconnect attempts.
    */
   private handleDisconnect(): void {
+    // Prevent duplicate execution if already disconnected or reconnecting
+    if (this._connectionState === 'disconnected' || this._connectionState === 'reconnecting') {
+      return;
+    }
     this.stopKeepAlive();
     this.log(`[BLE] ${l10n.t('Device disconnected: {0}', this.deviceName)}`);
 
@@ -567,6 +579,10 @@ export class BleManager {
         this.reconnectAttempts = 0;
         this.log(`[BLE] ${l10n.t('Reconnected successfully')}`);
       } catch {
+        // Clean up any partial BLE connection to avoid half-connected Noble state
+        if (this.currentDevice) {
+          try { await this.currentDevice.disconnectAsync(); } catch { /* ignore */ }
+        }
         if (this.reconnectAttempts < getBleMaxReconnectAttempts()) {
           this.attemptReconnect();
         } else {
