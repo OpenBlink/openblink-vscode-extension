@@ -30,6 +30,7 @@
   "config.ble.maxReconnectAttempts": "さいせつぞくさいだいかいすう (0-20)",
   "config.ble.initialReconnectDelay": "しょきさいせつぞくおきみそく (ミリびょう、100-10000。くりかえしごとに2ばい)",
   "config.ble.defaultMtu": "MTU きょうしょうしっぱい時のきていち (バイト、7-512)",
+  "config.ble.heartbeatInterval": "BLE キープアライブ ハートビートかんかく (ミリびょう、0=むこう、0-30000)",
   "config.mcp.statusDebounce": "ステータスファイルかきこみディバウンス (ミリびょう、100-10000)",
   "config.mcp.consoleDebounce": "コンソールログファイルかきこみディバウンス (ミリびょう、100-10000)",
   "config.console.bufferSize": "コンソールにほぞんするぎょうすうじょうげん (10-1000)",

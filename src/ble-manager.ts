@@ -17,6 +17,7 @@ import {
   getBleMaxReconnectAttempts,
   getBleInitialReconnectDelay,
   getBleDefaultMtu,
+  getBleHeartbeatInterval,
 } from './types';
 
 /**
@@ -82,6 +83,10 @@ export class BleManager {
   private consoleCharacteristic: NobleCharacteristic | null = null;
   /** @brief BLE characteristic for reading the negotiated MTU. */
   private negotiatedMtuCharacteristic: NobleCharacteristic | null = null;
+  /** @brief Heartbeat timer for BLE keep-alive. */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** @brief Flag to pause heartbeat during firmware transfer. */
+  private _isTransferring = false;
   /** @brief Currently connected peripheral, or null if disconnected. */
   private currentDevice: NoblePeripheral | null = null;
   /** @brief Current connection state. */
@@ -133,6 +138,8 @@ export class BleManager {
   get connectionState(): ConnectionState { return this._connectionState; }
   /** @brief Negotiated BLE MTU size in bytes. */
   get negotiatedMTU(): number { return this._negotiatedMTU; }
+  /** @brief Set transferring flag to pause heartbeat during firmware transfer. */
+  set isTransferring(value: boolean) { this._isTransferring = value; }
   /** @brief Whether a device is currently connected and ready. */
   get isConnected(): boolean { return this._connectionState === 'connected' && this.currentDevice !== null; }
   /** @brief Whether a BLE scan is currently active. */
@@ -425,6 +432,9 @@ export class BleManager {
 
     this.setConnectionState('connected');
     this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
+
+    // Start keep-alive heartbeat
+    this.startKeepAlive();
   }
 
   /**
@@ -466,6 +476,42 @@ export class BleManager {
   }
 
   /**
+   * @brief Send a heartbeat ping to keep the BLE connection alive.
+   *
+   * Reads from the MTU characteristic to maintain communication
+   * and prevent the BLE supervision timeout from expiring.
+   */
+  private async sendHeartbeat(): Promise<void> {
+    if (!this.negotiatedMtuCharacteristic || this._isTransferring) return;
+    if (this.currentDevice?.state !== 'connected') return;
+    try {
+      await this.negotiatedMtuCharacteristic.readAsync();
+    } catch (error) {
+      this.log(`[BLE] Heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * @brief Start the keep-alive heartbeat timer.
+   */
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    const interval = getBleHeartbeatInterval();
+    if (interval <= 0) return; // 0 = disabled
+    this.heartbeatTimer = setInterval(() => { void this.sendHeartbeat(); }, interval);
+  }
+
+  /**
+   * @brief Stop the keep-alive heartbeat timer.
+   */
+  private stopKeepAlive(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  /**
    * @brief Handle an unexpected or user-initiated disconnection.
    *
    * Resets characteristic references and MTU. If the disconnect was
@@ -473,6 +519,7 @@ export class BleManager {
    * automatic reconnection up to the configured max reconnect attempts.
    */
   private handleDisconnect(): void {
+    this.stopKeepAlive();
     this.log(`[BLE] ${l10n.t('Device disconnected: {0}', this.deviceName)}`);
 
     this.removeConsoleListener();
@@ -539,6 +586,7 @@ export class BleManager {
    * the peripheral, and resets all internal state.
    */
   async disconnect(): Promise<void> {
+    this.stopKeepAlive();
     this.userInitiatedDisconnect = true;
     this.reconnectAttempts = getBleMaxReconnectAttempts();
 
@@ -598,6 +646,7 @@ export class BleManager {
    * emitter.  Called automatically when the extension deactivates.
    */
   async dispose(): Promise<void> {
+    this.stopKeepAlive();
     this._disposed = true;
     this.userInitiatedDisconnect = true;
     if (this.reconnectTimer) {

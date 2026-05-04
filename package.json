@@ -191,6 +191,13 @@
           "maximum": 512,
           "description": "%config.ble.defaultMtu%"
         },
+        "openblink.ble.heartbeatInterval": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 0,
+          "maximum": 30000,
+          "description": "%config.ble.heartbeatInterval%"
+        },
         "openblink.mcp.statusDebounce": {
           "type": "number",
           "default": 1000,

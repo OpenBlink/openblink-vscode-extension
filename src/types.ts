@@ -225,6 +225,8 @@ export const BLE_CONSTANTS = {
 
   /** @brief Default MTU used when negotiation fails or is unavailable (bytes). */
   DEFAULT_MTU: 20,
+  /** @brief BLE keep-alive heartbeat interval in milliseconds (0 = disabled). */
+  HEARTBEAT_INTERVAL: 3000,
   /** @brief Size of the header prepended to each Data ('D') packet (bytes). */
   DATA_HEADER_SIZE: 6,
   /** @brief Size of the Program ('P') header packet (bytes). */
@@ -299,6 +301,14 @@ export function getBleInitialReconnectDelay(): number {
  */
 export function getBleDefaultMtu(): number {
   return vscode.workspace.getConfiguration('openblink.ble').get<number>('defaultMtu', 20);
+}
+
+/**
+ * @brief Get the configured BLE heartbeat interval from VS Code settings.
+ * @returns Heartbeat interval in milliseconds (default: 3000, 0 = disabled).
+ */
+export function getBleHeartbeatInterval(): number {
+  return vscode.workspace.getConfiguration('openblink.ble').get<number>('heartbeatInterval', 3000);
 }
 
 /**

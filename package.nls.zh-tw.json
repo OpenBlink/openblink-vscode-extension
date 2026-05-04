@@ -30,6 +30,7 @@
   "config.ble.maxReconnectAttempts": "最大自動重連次數（0-20）",
   "config.ble.initialReconnectDelay": "初始重連延遲（毫秒，100-10000，每次翻倍）",
   "config.ble.defaultMtu": "協商失敗時的預設 MTU 遞補值（位元組，7-512）",
+  "config.ble.heartbeatInterval": "BLE 保活心跳間隔（毫秒，0=停用，0-30000）",
   "config.mcp.statusDebounce": "狀態檔案寫入防抖動間隔（毫秒，100-10000）",
   "config.mcp.consoleDebounce": "控制台日誌檔案寫入防抖動間隔（毫秒，100-10000）",
   "config.console.bufferSize": "保留的最大控制台輸出行數（10-1000）",
