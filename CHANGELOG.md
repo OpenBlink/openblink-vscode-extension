@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-05-04
+
+### Added
+- **Windows ARM64 VSIX** — Release pipeline now builds and publishes a native `win32-arm64` VSIX using the `windows-11-arm` GitHub-hosted runner, enabling first-class support on Windows ARM devices (e.g. Snapdragon X Elite).
+- **Linux ARM64 VSIX** — Release pipeline now builds and publishes a native `linux-arm64` VSIX using the `ubuntu-24.04-arm` GitHub-hosted runner (native, no emulation required).
+- **Linux ARM hard-float (armhf) VSIX** — Release pipeline now builds and publishes a `linux-armhf` VSIX for ARMv7 devices such as Raspberry Pi 3/4 running 32-bit Linux. **Note: this is a best-effort cross-build.** QEMU via `docker/setup-qemu-action` is used to emulate the ARMv7 environment, but `npm ci` still compiles native Node addons for the host (`x86_64`) architecture. As a result, the BLE native bindings (`@abandonware/noble` / `bluetooth-hci-socket`) bundled in this VSIX are built for x86_64 and **may not work** on real armhf devices. Users who encounter BLE issues on armhf should rebuild the native bindings locally (`npm rebuild`) after installing the VSIX.
+- **Dependabot for GitHub Actions** — Added `.github/dependabot.yml` to keep `actions/*` dependencies automatically up to date.
+
+### Fixed
+- **ESLint `curly` rule** — Added braces to all single-statement `if` blocks in `ble-manager.ts` to satisfy the ESLint `curly` rule, eliminating lint warnings in CI.
+
+### Changed
+- **GitHub Actions workflows overhaul** — Significant improvements to `ci.yml`, `release.yml`, and `wasm-build.yml`:
+  - `release.yml`: VSIX artifacts are now collected under a `vsix/` subdirectory for cleaner artifact handling; Marketplace and Open VSX publish loops iterate per-file with individual warning annotations on failure; GitHub Release summary is enriched with an artifacts listing table; `win32-arm64`, `linux-arm64`, and `linux-armhf` added to the build matrix (7 platforms total); version-consistency check moved from release to CI.
+  - `ci.yml`: Version-consistency check (`TAG_VERSION` vs `package.json`) now runs in the CI workflow on tag pushes, catching mismatches before the release pipeline starts.
+  - `wasm-build.yml`: Added `concurrency` group to cancel in-progress WASM builds on new pushes; added `git config core.autocrlf false` step to avoid line-ending issues on Windows runners.
+  - All workflows: Redundant blank lines and `name:` prefixes cleaned up for readability; `cache: npm` (unquoted) for consistency.
+
 ## [0.3.6] - 2026-05-04
 
 ### Added
@@ -204,6 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial release with basic Build & Blink functionality over BLE
 
+[0.3.7]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.3...v0.3.4
