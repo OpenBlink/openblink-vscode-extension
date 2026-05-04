@@ -29,8 +29,8 @@ export interface DeviceInfo {
  * @brief Extended Noble Peripheral type with async helper methods.
  *
  * Overrides `discoverServicesAsync` to return {@link NobleService} instances
- * and adds `connectAsync`, `disconnectAsync`, `updateRssiAsync`, and optional
- * `gatt.requestMTU` for MTU negotiation.
+ * and adds `connectAsync`, `disconnectAsync`, `updateRssiAsync`, and
+ * `discoverSomeServicesAndCharacteristicsAsync` for efficient GATT discovery.
  */
 export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync' | 'discoverSomeServicesAndCharacteristicsAsync'> & {
   discoverServicesAsync: () => Promise<NobleService[]>;
@@ -41,9 +41,6 @@ export type NoblePeripheral = Omit<Peripheral, 'discoverServicesAsync' | 'discov
   connectAsync: () => Promise<void>;
   disconnectAsync: () => Promise<void>;
   updateRssiAsync: () => Promise<number>;
-  gatt?: {
-    requestMTU: (mtu: number) => Promise<number>;
-  };
 };
 
 /**
@@ -228,8 +225,6 @@ export const BLE_CONSTANTS = {
 
   /** @brief Default MTU used when negotiation fails or is unavailable (bytes). */
   DEFAULT_MTU: 20,
-  /** @brief MTU value requested during GATT-level negotiation (bytes). */
-  REQUESTED_MTU: 512,
   /** @brief Size of the header prepended to each Data ('D') packet (bytes). */
   DATA_HEADER_SIZE: 6,
   /** @brief Size of the Program ('P') header packet (bytes). */
@@ -296,14 +291,6 @@ export function getBleMaxReconnectAttempts(): number {
  */
 export function getBleInitialReconnectDelay(): number {
   return vscode.workspace.getConfiguration('openblink.ble').get<number>('initialReconnectDelay', 1000);
-}
-
-/**
- * @brief Get the configured requested MTU from VS Code settings.
- * @returns Requested MTU in bytes (default: 512).
- */
-export function getBleRequestedMtu(): number {
-  return vscode.workspace.getConfiguration('openblink.ble').get<number>('requestedMtu', 512);
 }
 
 /**

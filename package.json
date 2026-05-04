@@ -184,13 +184,6 @@
           "maximum": 10000,
           "description": "%config.ble.initialReconnectDelay%"
         },
-        "openblink.ble.requestedMtu": {
-          "type": "number",
-          "default": 512,
-          "minimum": 23,
-          "maximum": 1024,
-          "description": "%config.ble.requestedMtu%"
-        },
         "openblink.ble.defaultMtu": {
           "type": "number",
           "default": 20,

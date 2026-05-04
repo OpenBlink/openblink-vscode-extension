@@ -16,7 +16,6 @@ import {
   getBleConnectionTimeout,
   getBleMaxReconnectAttempts,
   getBleInitialReconnectDelay,
-  getBleRequestedMtu,
   getBleDefaultMtu,
 } from './types';
 
@@ -431,9 +430,10 @@ export class BleManager {
   /**
    * @brief Negotiate the BLE MTU with the connected device.
    *
-   * Attempts GATT-level MTU negotiation first (`gatt.requestMTU`). If
-   * unavailable, falls back to reading the device's advertised MTU from
-   * the dedicated characteristic. On failure, resets to the configured default MTU.
+   * Uses Noble's standard `peripheral.mtu` (auto-negotiated on Linux) first.
+   * Falls back to reading the device's advertised MTU from the dedicated
+   * characteristic (Mac/Win where peripheral.mtu is null). On failure,
+   * resets to the configured default MTU.
    *
    * The final value is clamped to at least MIN_USABLE_MTU
    * to guarantee that data packets always carry at least one payload byte.
@@ -442,8 +442,10 @@ export class BleManager {
    */
   private async negotiateMTU(device: NoblePeripheral): Promise<void> {
     try {
-      if (device.gatt?.requestMTU) {
-        this._negotiatedMTU = await device.gatt.requestMTU(getBleRequestedMtu());
+      // 1. Noble standard: peripheral.mtu (Linux hci-socket auto-negotiates to 256)
+      if (device.mtu !== null && device.mtu > 0) {
+        this._negotiatedMTU = device.mtu - 3; // ATT_MTU - 3 (opcode + handle)
+      // 2. Fallback: read device-side MTU from characteristic (Mac/Win)
       } else if (this.negotiatedMtuCharacteristic) {
         const buffer = await this.negotiatedMtuCharacteristic.readAsync();
         if (buffer.length >= 2) {

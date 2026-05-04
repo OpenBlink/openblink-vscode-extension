@@ -29,7 +29,6 @@
   "config.ble.connectionTimeout": "BLE 连接超时时间（毫秒，1000-60000）",
   "config.ble.maxReconnectAttempts": "最大自动重连次数（0-20）",
   "config.ble.initialReconnectDelay": "初始重连延迟（毫秒，100-10000，每次翻倍）",
-  "config.ble.requestedMtu": "GATT 协商请求的 MTU 大小（字节，23-1024）",
   "config.ble.defaultMtu": "协商失败时的默认 MTU 回退值（字节，7-512）",
   "config.mcp.statusDebounce": "状态文件写入防抖间隔（毫秒，100-10000）",
   "config.mcp.consoleDebounce": "控制台日志文件写入防抖间隔（毫秒，100-10000）",
