@@ -12,11 +12,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: wasm-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-mrbc-wasm:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           submodules: recursive
