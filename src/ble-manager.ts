@@ -489,9 +489,15 @@ export class BleManager {
    * and prevent the BLE supervision timeout from expiring.
    */
   private async sendHeartbeat(): Promise<void> {
-    if (this._connectionState !== 'connected') return;
-    if (this.currentDevice?.state !== 'connected') return;
-    if (!this.negotiatedMtuCharacteristic || this._isTransferring) return;
+    if (this._connectionState !== 'connected') {
+      return;
+    }
+    if (this.currentDevice?.state !== 'connected') {
+      return;
+    }
+    if (!this.negotiatedMtuCharacteristic || this._isTransferring) {
+      return;
+    }
     try {
       await this.negotiatedMtuCharacteristic.readAsync();
     } catch (error) {
@@ -505,7 +511,9 @@ export class BleManager {
   private startKeepAlive(): void {
     this.stopKeepAlive();
     const interval = getBleHeartbeatInterval();
-    if (interval <= 0) return; // 0 = disabled
+    if (interval <= 0) {
+      return; // 0 = disabled
+    }
     this.heartbeatTimer = setInterval(() => { void this.sendHeartbeat(); }, interval);
   }
 
