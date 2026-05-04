@@ -2,41 +2,78 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build-wasm:
+  lint-and-test:
+    name: Release gate (lint + typecheck + test)
     runs-on: ubuntu-latest
     steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit -p .
+      - name: Verify tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match package.json version $PKG"
+            exit 1
+          fi
+          echo "Version: $TAG"
+      - name: Build
+        run: npm run compile
+      - name: Test
+        run: xvfb-run -a npm test
 
+  build-wasm:
+    name: Build mrbc WASM
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 5.0.7
-
       - name: Verify Emscripten
         run: emcc --version
-
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
-
       - name: Build mrbc WASM
         run: make mrbc
-
       - name: Verify mrbc WASM output
         run: |
           ls -la resources/wasm/mrbc.js
           ls -la resources/wasm/mrbc.wasm
-
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
         with:
@@ -44,9 +81,10 @@ jobs:
           path: resources/wasm/
 
   build:
+    name: Build VSIX (${{ matrix.target }})
     needs: build-wasm
-    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -56,139 +94,122 @@ jobs:
             node_arch: x64
           - os: windows-latest
             target: win32-x64
+          - os: windows-11-arm
+            target: win32-arm64
           - os: ubuntu-latest
             target: linux-x64
-
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: ubuntu-latest
+            target: linux-armhf
+            cross: true
+    runs-on: ${{ matrix.os }}
     steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
-
-      - name: Use Node.js 22
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           architecture: ${{ matrix.node_arch || '' }}
-          cache: 'npm'
-
-      - name: Verify version consistency
-        shell: bash
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
-            exit 1
-          fi
-          echo "Version: $TAG_VERSION"
-
+          cache: npm
+      - name: Set up QEMU (cross-build)
+        if: matrix.cross
+        uses: docker/setup-qemu-action@v3
       - name: Install dependencies
         run: npm ci
-
       - name: Verify native binding (macOS/Windows)
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && !matrix.cross
         shell: bash
         run: |
           echo "Noble native binding:"
           ls -la node_modules/@abandonware/noble/build/Release/binding.node
-
       - name: Verify native binding (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.cross
         shell: bash
         run: |
           echo "bluetooth-hci-socket native binding:"
           ls -la node_modules/@abandonware/bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node
-
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
         with:
           name: wasm
           path: resources/wasm/
-
-      - name: Lint
-        if: matrix.target == 'linux-x64'
-        run: npm run lint
-
-      - name: Test
-        if: matrix.target == 'linux-x64'
-        run: xvfb-run -a npm test
-
       - name: Remove unnecessary bluetooth-hci-socket (non-Linux)
         if: runner.os != 'Linux'
         shell: bash
         run: rm -rf node_modules/@abandonware/bluetooth-hci-socket
-
-      - name: Package VSIX
-        run: npx @vscode/vsce package --target ${{ matrix.target }}
-
+      - name: Package VSIX (${{ matrix.target }})
+        run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }}
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.target }}
-          path: "*.vsix"
+          path: '*.vsix'
 
   publish:
+    name: Publish (Marketplace + Open VSX + GitHub Releases)
     needs: build
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: write
-
     steps:
-      - name: Use Node.js 22
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-
+      - name: Install publishers
+        run: npm install -g @vscode/vsce@3 ovsx@0
       - name: Download all VSIX artifacts
         uses: actions/download-artifact@v4
         with:
+          path: vsix
           pattern: vsix-*
           merge-multiple: true
-
       - name: List VSIX files
-        run: ls -la *.vsix
-
-      - name: Install publish tools
-        run: npm install -g @vscode/vsce@3 ovsx@0
-
+        run: ls -la vsix
       - name: Publish to VS Code Marketplace
-        id: vsce
+        id: marketplace
         continue-on-error: true
-        run: vsce publish --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
-
-      - name: Publish to Open VSX
-        id: ovsx
-        continue-on-error: true
         run: |
-          failed=0
-          for vsix in *.vsix; do
-            ovsx publish "$vsix" || failed=1
+          for file in vsix/*.vsix; do
+            echo "Publishing $file to Marketplace..."
+            vsce publish --packagePath "$file" || echo "Marketplace publish failed for $file"
           done
-          [ "$failed" -eq 0 ]
+      - name: Publish to Open VSX
+        id: openvsx
+        continue-on-error: true
         env:
           OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
-
+        run: |
+          for file in vsix/*.vsix; do
+            echo "Publishing $file to Open VSX..."
+            ovsx publish "$file" || echo "Open VSX publish failed for $file"
+          done
       - name: Create GitHub Release
-        if: ${{ !cancelled() }}
         uses: softprops/action-gh-release@v2
         with:
-          files: '*.vsix'
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+          files: vsix/*.vsix
       - name: Publish summary
-        if: ${{ !cancelled() }}
         run: |
-          echo "## Publish Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Channel | Status |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---------|--------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| VS Code Marketplace | ${{ steps.vsce.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Open VSX | ${{ steps.ovsx.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.vsce.outcome }}" = "failure" ]; then
+          {
+            echo "# OpenBlink Release Summary";
+            echo "";
+            echo "| Channel | Result |";
+            echo "|---------|--------|";
+            echo "| VS Code Marketplace | ${{ steps.marketplace.outcome }} |";
+            echo "| Open VSX | ${{ steps.openvsx.outcome }} |";
+            echo "| GitHub Release | success |";
+            echo "";
+            echo "## Artifacts";
+            ls -la vsix | awk 'NR>1 {print "- " $9}';
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.marketplace.outcome }}" = "failure" ]; then
             echo "::warning::VS Code Marketplace publish failed"
           fi
-          if [ "${{ steps.ovsx.outcome }}" = "failure" ]; then
+          if [ "${{ steps.openvsx.outcome }}" = "failure" ]; then
             echo "::warning::Open VSX publish failed"
           fi
