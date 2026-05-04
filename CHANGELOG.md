@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-05-04
+
+### Added
+- **Node.js 22 runtime support + VS Code 1.102.0 MCP GA** — Migrated to Node.js 22 and bumped VS Code engine requirement to `^1.102.0`. This version aligns with the official General Availability of the Model Context Protocol (MCP) in VS Code, ensuring full compatibility with the stable MCP APIs.
+- **BLE heartbeat keep-alive** — The extension now sends periodic heartbeat pings to the connected BLE device to prevent silent disconnections during idle sessions.
+- **Emscripten 5.0.7 upgrade** — Updated the bundled `mrbc.wasm` compiler from Emscripten 5.0.5 to 5.0.7 (via `vendor/emsdk` git submodule). Smaller WASM binary and improved codegen stability.
+
+### Fixed
+- **BLE connection stability** — Improved error handling during BLE connect/disconnect transitions, reducing spurious "connection lost" notifications when the device is still establishing the link.
+
+### Changed
+- **Simplified GATT discovery** — Replaced full service/characteristic enumeration with `discoverSomeServicesAndCharacteristicsAsync`, cutting connection setup time.
+- **Removed dead MTU negotiation code** — Dropped the manual MTU negotiation path; the extension now reads `peripheral.mtu` directly from the BLE stack, aligning with modern noble behavior.
+
 ## [0.3.5] - 2026-04-19
 
 ### Added
@@ -190,6 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial release with basic Build & Blink functionality over BLE
 
+[0.3.6]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.2...v0.3.3

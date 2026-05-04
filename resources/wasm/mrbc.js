@@ -250,7 +250,7 @@ function initRuntime() {
 TTY.init();
   // End ATINITS hooks
 
-  wasmExports['__wasm_call_ctors']();
+  
 
   // Begin ATPOSTCTORS hooks
   FS.ignorePermissions = false;
