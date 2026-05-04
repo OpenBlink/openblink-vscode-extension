@@ -179,13 +179,7 @@ jobs:
         continue-on-error: true
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
-        run: |
-          failed=0
-          for file in vsix/*.vsix; do
-            echo "Publishing $file to Marketplace..."
-            vsce publish --packagePath "$file" || { echo "::warning::Marketplace publish failed for $file"; failed=1; }
-          done
-          exit $failed
+        run: vsce publish --packagePath vsix/*.vsix --skip-duplicate
       - name: Publish to Open VSX
         id: openvsx
         continue-on-error: true
@@ -195,7 +189,7 @@ jobs:
           failed=0
           for file in vsix/*.vsix; do
             echo "Publishing $file to Open VSX..."
-            ovsx publish "$file" || { echo "::warning::Open VSX publish failed for $file"; failed=1; }
+            ovsx publish "$file" --skip-duplicate || { echo "::warning::Open VSX publish failed for $file"; failed=1; }
           done
           exit $failed
       - name: Create GitHub Release
