@@ -28,7 +28,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        uses: mymindstorm/setup-emsdk@v16
         with:
           version: 5.0.7
 
