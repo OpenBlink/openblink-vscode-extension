@@ -65,9 +65,11 @@ jobs:
           ls -la node_modules/@abandonware/bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node
       - name: Build
         run: npm run compile
+      - name: Compile tests
+        run: npm run compile-tests
       - name: Test (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a npm test
+        run: xvfb-run -a npx vscode-test
       - name: Test (non-Linux)
         if: runner.os != 'Linux'
-        run: npm test
+        run: npx vscode-test

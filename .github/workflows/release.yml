@@ -45,8 +45,10 @@ jobs:
           echo "Version: $TAG"
       - name: Build
         run: npm run compile
+      - name: Compile tests
+        run: npm run compile-tests
       - name: Test
-        run: xvfb-run -a npm test
+        run: xvfb-run -a npx vscode-test
 
   build-wasm:
     name: Build mrbc WASM
@@ -100,6 +102,10 @@ jobs:
             target: linux-x64
           - os: ubuntu-24.04-arm
             target: linux-arm64
+          # NOTE: linux-armhf is a best-effort cross-build. QEMU enables
+          # running ARM binaries via binfmt_misc but npm ci still compiles
+          # native Node addons for the host (x86_64) architecture. BLE
+          # native bindings in this VSIX may not work on real armhf devices.
           - os: ubuntu-latest
             target: linux-armhf
             cross: true
@@ -174,26 +180,32 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
         run: |
+          failed=0
           for file in vsix/*.vsix; do
             echo "Publishing $file to Marketplace..."
-            vsce publish --packagePath "$file" || echo "Marketplace publish failed for $file"
+            vsce publish --packagePath "$file" || { echo "::warning::Marketplace publish failed for $file"; failed=1; }
           done
+          exit $failed
       - name: Publish to Open VSX
         id: openvsx
         continue-on-error: true
         env:
           OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
         run: |
+          failed=0
           for file in vsix/*.vsix; do
             echo "Publishing $file to Open VSX..."
-            ovsx publish "$file" || echo "Open VSX publish failed for $file"
+            ovsx publish "$file" || { echo "::warning::Open VSX publish failed for $file"; failed=1; }
           done
+          exit $failed
       - name: Create GitHub Release
+        if: ${{ !cancelled() }}
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: vsix/*.vsix
       - name: Publish summary
+        if: ${{ !cancelled() }}
         run: |
           {
             echo "# OpenBlink Release Summary";
