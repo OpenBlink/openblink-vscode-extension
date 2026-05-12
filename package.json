@@ -333,7 +333,7 @@
     "@vscode/vsce": "^3.9.1",
     "copy-webpack-plugin": "^14.0.0",
     "eslint": "^10.2.0",
-    "ovsx": "^0.10.11",
+    "ovsx": "^0.10.12",
     "ts-loader": "^9.5.2",
     "typescript": "^6.0.2",
     "webpack": "^5.98.0",
