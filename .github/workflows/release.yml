@@ -137,7 +137,7 @@ jobs:
           echo "bluetooth-hci-socket native binding:"
           ls -la node_modules/@abandonware/bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node
       - name: Download WASM artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm
           path: resources/wasm/
@@ -167,7 +167,7 @@ jobs:
       - name: Install publishers
         run: npm install -g @vscode/vsce@3 ovsx@0
       - name: Download all VSIX artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: vsix
           pattern: vsix-*
