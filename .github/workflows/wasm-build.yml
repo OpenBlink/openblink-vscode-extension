@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Disable CRLF conversion
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
