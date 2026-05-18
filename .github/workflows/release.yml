@@ -77,7 +77,7 @@ jobs:
           ls -la resources/wasm/mrbc.js
           ls -la resources/wasm/mrbc.wasm
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wasm
           path: resources/wasm/
@@ -148,7 +148,7 @@ jobs:
       - name: Package VSIX (${{ matrix.target }})
         run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }}
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vsix-${{ matrix.target }}
           path: '*.vsix'
