@@ -25,6 +25,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          check-latest: true
           cache: npm
       - name: Install dependencies
         run: npm ci
@@ -69,7 +70,7 @@ jobs:
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.3'
+          ruby-version: '3.4'
       - name: Build mrbc WASM
         run: make mrbc
       - name: Verify mrbc WASM output
@@ -117,6 +118,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          check-latest: true
           architecture: ${{ matrix.node_arch || '' }}
           cache: npm
       - name: Set up QEMU (cross-build)
@@ -163,7 +165,8 @@ jobs:
     steps:
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
+          check-latest: true
       - name: Install publishers
         run: npm install -g @vscode/vsce@3 ovsx@0
       - name: Download all VSIX artifacts

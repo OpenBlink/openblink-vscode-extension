@@ -323,20 +323,20 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "25.x",
-    "@types/vscode": "^1.120.0",
+    "@types/node": "^22.19.19",
+    "@types/vscode": "1.102.0",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
-    "@typescript-eslint/parser": "^8.28.0",
+    "@typescript-eslint/parser": "^8.59.4",
     "@vscode/l10n-dev": "^0.0.35",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.4.1",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
     "copy-webpack-plugin": "^14.0.0",
     "eslint": "^10.4.0",
     "ovsx": "^0.10.12",
-    "ts-loader": "^9.5.2",
+    "ts-loader": "^9.5.7",
     "typescript": "^6.0.3",
-    "webpack": "^5.106.2",
+    "webpack": "^5.107.1",
     "webpack-cli": "^7.0.2"
   },
   "dependencies": {
@@ -344,5 +344,12 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vscode/l10n": "^0.0.18",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "diff": "^9.0.0",
+    "serialize-javascript": "^7.0.5",
+    "tar": "^7.5.15",
+    "node-gyp": "^12.3.0",
+    "@mapbox/node-pre-gyp": "^2.0.3"
   }
 }
