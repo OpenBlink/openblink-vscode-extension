@@ -115,7 +115,7 @@ Releases are automated via GitHub Actions. Pushing a version tag triggers the wo
 
 ### Prerequisites
 
-- `VSCE_PAT` — Azure DevOps Personal Access Token with **Marketplace > Manage** scope, stored in GitHub Secrets
+- `AZURE_PAT` — Azure DevOps Personal Access Token with **Marketplace > Manage** scope, stored in GitHub Secrets and exposed to `vsce` as `VSCE_PAT`
 - `OVSX_PAT` — Open VSX access token, stored in GitHub Secrets
 
 ### Steps
@@ -132,20 +132,24 @@ git push origin v<VERSION>
 
 ### Release Pipeline
 
-The CI pipeline (`.github/workflows/release.yml`) runs a 3-job workflow:
+The release workflow (`.github/workflows/release.yml`) runs a 4-job pipeline:
 
-1. **`build-wasm`** — Builds mrbc WASM from source (Emscripten + Ruby)
-2. **`build`** (matrix ×4) — Runs `npm ci` on each OS to compile native BLE bindings, then `vsce package --target <platform>` to create platform-specific VSIXs:
+1. **`lint-and-test`** — Runs ESLint, TypeScript typecheck, version consistency validation on tags, webpack build, test compilation, and the VS Code integration test suite.
+2. **`build-wasm`** — Builds mrbc WASM from source (Emscripten + Ruby).
+3. **`build`** (matrix ×7) — Runs `npm ci` on each OS to compile native BLE bindings, then `vsce package --target <platform>` to create platform-specific VSIXs:
    - `darwin-arm64` (macOS Apple Silicon)
    - `darwin-x64` (macOS Intel)
-   - `win32-x64` (Windows)
-   - `linux-x64` (Linux)
-3. **`publish`** — Downloads all VSIXs and publishes to:
-   - **VS Code Marketplace** (`vsce publish --packagePath *.vsix`)
+   - `win32-x64` (Windows x64)
+   - `win32-arm64` (Windows ARM64)
+   - `linux-x64` (Linux x64)
+   - `linux-arm64` (Linux ARM64)
+   - `linux-armhf` (Linux ARM hard-float, best-effort cross-build)
+4. **`publish`** — Downloads all VSIXs and publishes to:
+   - **VS Code Marketplace** (`vsce publish --packagePath vsix/*.vsix`)
    - **Open VSX** (per-file loop)
    - **GitHub Release** (all VSIX files attached, always created)
 
-Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Release is always created so VSIX files are available for manual download. Lint and tests run on the Linux matrix runner.
+Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Release is always created so VSIX files are available for manual download.
 
 ### User Experience
 
