@@ -49,7 +49,7 @@ jobs:
           ls -la resources/wasm/mrbc.wasm
 
       - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mrbc-wasm
           path: |
