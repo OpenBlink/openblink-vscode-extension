@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-05-24
+
+### Changed
+- **CI dependency tooling refresh** — Updated GitHub Actions workflow dependencies (`actions/checkout@v6`, `actions/setup-node@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, `docker/setup-qemu-action@v4`, `softprops/action-gh-release@v3`, `mymindstorm/setup-emsdk@v16`) and enabled `check-latest` for Node.js setup steps so CI/release jobs pick up the latest compatible Node.js 22/24 patch releases.
+- **Release runtime alignment** — Release build/test/package jobs continue to use Node.js 22 for VS Code extension host and native addon compatibility, while publisher-only jobs use Node.js 24 and the WASM build uses Ruby 3.4.
+- **Development dependency refresh** — Updated TypeScript, ESLint, webpack, VS Code test/package tooling, `ovsx`, and related type packages to newer compatible versions.
+- **MCP validation dependency upgrade** — Updated `zod` to 4.4.3.
+
+### Security
+- **Transitive dependency hardening** — Added npm overrides for `diff`, `serialize-javascript`, `tar`, `node-gyp`, and `@mapbox/node-pre-gyp` to keep vulnerable transitive packages on patched versions.
+
+### Fixed
+- **VS Code type lockfile sync** — Synced the lockfile entry for `@types/vscode` with the pinned package manifest version.
+
 ## [0.3.7] - 2026-05-04
 
 ### Added
@@ -222,6 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial release with basic Build & Blink functionality over BLE
 
+[0.3.8]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/OpenBlink/openblink-vscode-extension/compare/v0.3.4...v0.3.5
