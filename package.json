@@ -323,8 +323,8 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.19.19",
-    "@types/vscode": "1.102.0",
+    "@types/node": "^25.9.1",
+    "@types/vscode": "1.120.0",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
     "@typescript-eslint/parser": "^8.59.4",
     "@vscode/l10n-dev": "^0.0.35",
@@ -336,7 +336,7 @@
     "ovsx": "^0.10.12",
     "ts-loader": "^9.5.7",
     "typescript": "^6.0.3",
-    "webpack": "^5.107.1",
+    "webpack": "^5.107.2",
     "webpack-cli": "^7.0.2"
   },
   "dependencies": {
