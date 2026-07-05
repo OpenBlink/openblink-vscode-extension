@@ -9,6 +9,18 @@ updates:
     labels:
       - dependencies
       - npm
+    ignore:
+      # Must stay pinned to the minimum VS Code API declared in engines.vscode.
+      # Update manually only when engines.vscode is raised.
+      - dependency-name: "@types/vscode"
+      # Safeguard: never bump anything named "vscode". Note that Dependabot
+      # only updates dependencies and never rewrites the engines field itself.
+      - dependency-name: "vscode"
+      # Must match the Node.js version of the VS Code extension host
+      # (Node 22 for VS Code 1.102+). Allow minor/patch updates within 22.x.
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
     groups:
       devDependencies:
         patterns:
