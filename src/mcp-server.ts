@@ -50,6 +50,7 @@
  *   - `deploy-and-debug`   — Guided compile/transfer/verify workflow.
  *   - `fix-build-errors`   — Diagnose and fix the last failed build.
  *   - `write-board-program` — Write a new mruby program for the selected board.
+ *   - `troubleshoot-connection` — Systematic BLE connection diagnosis.
  *
  * @see https://modelcontextprotocol.io/
  */
@@ -362,7 +363,7 @@ function completeOperation(requestId: string): void {
 /** @brief Result of resolving and validating the selected board's reference file. */
 type BoardReferenceResolution =
   | { ok: true; displayName: string; refPath: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; isError: boolean };
 
 /**
  * @brief Resolve the selected board's API reference path from `status.json`.
@@ -379,7 +380,8 @@ function resolveBoardReference(dir: string): BoardReferenceResolution {
   }>(path.join(dir, 'status.json'));
 
   if (!status?.board) {
-    return { ok: false, error: 'No board selected. Use the OpenBlink sidebar to select a board.' };
+    // Informational, not a failure: an agent can guide the user to select a board.
+    return { ok: false, error: 'No board selected. Use the OpenBlink sidebar to select a board.', isError: false };
   }
 
   const referencePathInput = status.board.referencePath;
@@ -389,20 +391,20 @@ function resolveBoardReference(dir: string): BoardReferenceResolution {
     .filter((segment) => segment.length > 0);
   const refPath = path.resolve(referencePathInput);
   if (refPathSegments.includes('..') || path.extname(refPath).toLowerCase() !== '.md') {
-    return { ok: false, error: 'Board reference path is invalid or not a Markdown file.' };
+    return { ok: false, error: 'Board reference path is invalid or not a Markdown file.', isError: true };
   }
   const extensionDir = process.env.OPENBLINK_EXTENSION_DIR;
   if (!extensionDir) {
-    return { ok: false, error: 'Extension directory is not configured. Cannot verify board reference path.' };
+    return { ok: false, error: 'Extension directory is not configured. Cannot verify board reference path.', isError: true };
   }
   // Reject relative paths to prevent path traversal (SEC-07)
   if (!path.isAbsolute(extensionDir)) {
-    return { ok: false, error: 'OPENBLINK_EXTENSION_DIR must be an absolute path.' };
+    return { ok: false, error: 'OPENBLINK_EXTENSION_DIR must be an absolute path.', isError: true };
   }
   const resolvedExtensionDir = path.resolve(extensionDir);
   const relativeRefPath = path.relative(resolvedExtensionDir, refPath);
   if (relativeRefPath === '..' || relativeRefPath.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRefPath)) {
-    return { ok: false, error: 'Board reference path is outside the extension directory.' };
+    return { ok: false, error: 'Board reference path is outside the extension directory.', isError: true };
   }
   return { ok: true, displayName: status.board.displayName, refPath };
 }
@@ -495,7 +497,8 @@ const server = new McpServer({
     '=== Prompts ===\n' +
     '- deploy-and-debug — guided compile/transfer/verify workflow\n' +
     '- fix-build-errors — diagnose and fix the last failed build\n' +
-    '- write-board-program — write a new mruby program for the selected board',
+    '- write-board-program — write a new mruby program for the selected board\n' +
+    '- troubleshoot-connection — systematic BLE connection diagnosis',
 });
 
 // ----------------------------------------------------------------------------
@@ -870,7 +873,9 @@ server.registerTool('get_board_reference', {
     const dir = getIpcDir();
     const resolved = resolveBoardReference(dir);
     if (!resolved.ok) {
-      return { content: [{ type: 'text' as const, text: resolved.error }], isError: true };
+      return resolved.isError
+        ? { content: [{ type: 'text' as const, text: resolved.error }], isError: true }
+        : { content: [{ type: 'text' as const, text: resolved.error }] };
     }
     const { displayName, refPath } = resolved;
     const refContent = readTextFile(refPath);
@@ -1153,11 +1158,13 @@ server.registerTool('connect_device', {
         ));
       }
 
+      // Device names/RSSI are embedded in the message because `enumNames`
+      // is a UI hint that not all elicitation clients render.
       const labels = devices.map(d => `${d.name} (${d.id}${d.rssi !== undefined ? `, ${d.rssi}dBm` : ''})`);
       let elicited;
       try {
         elicited = await server.server.elicitInput({
-          message: 'Select the OpenBlink device to connect to.',
+          message: `Select the OpenBlink device to connect to. Discovered devices:\n${labels.map(l => `- ${l}`).join('\n')}`,
           requestedSchema: {
             type: 'object',
             properties: {
@@ -1872,6 +1879,34 @@ server.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
 //
 // Reusable prompt templates exposed by MCP clients as slash commands
 // (VS Code: /mcp.openblink.<prompt-name>).
+//
+// The prompt texts are written to work with ANY MCP-capable model, not just
+// a specific IDE assistant. They therefore spell out the exact tool names
+// and arguments, the domain constraints of mruby/c on microcontrollers,
+// success criteria, bounded retry loops, and explicit stop conditions —
+// nothing is assumed to be known from prior context.
+
+/**
+ * @brief Shared context block prepended to every prompt.
+ *
+ * Gives any model — regardless of vendor or prior exposure to OpenBlink —
+ * the minimum domain knowledge needed to use the tools correctly.
+ */
+const PROMPT_CONTEXT = [
+  '## Context',
+  'OpenBlink deploys mruby (embedded Ruby) programs to a microcontroller over Bluetooth Low Energy.',
+  'You control it exclusively through the MCP tools of the "OpenBlink" server; there is no shell or serial port.',
+  '',
+  'Hard constraints — violating any of these produces broken or undeployable programs:',
+  '- The target runs mruby/c, a small subset of Ruby: no gems, no require, no File/IO/Net/Thread, no String#format edge cases. Prefer simple loops, integers, and basic String/Array/Hash usage.',
+  '- Hardware APIs (LED, buttons, timers, etc.) differ per board. The ONLY authoritative API list is the get_board_reference tool (also available as the openblink://board/reference resource). Never invent or assume a method that is not documented there.',
+  '- Compiled bytecode must stay small (roughly 15 KB); keep programs short and avoid large literals.',
+  '- Long-running programs must be an explicit loop with a sleep inside (e.g. `while true; ...; sleep 0.1; end`); a program that falls off the end simply stops.',
+  '- Tools that talk to hardware (scan_devices, connect_device, build_and_blink, soft_reset) can fail transiently. Retry at most twice, then stop and report the failure instead of looping.',
+  '',
+  '## Reporting',
+  'When you finish (success or failure), report: what was deployed/changed, the tool results you observed (compile/transfer times, console output), and any remaining problems with a concrete next step for the user.',
+].join('\n');
 
 server.registerPrompt('deploy-and-debug', {
   title: 'Deploy & Debug',
@@ -1880,21 +1915,33 @@ server.registerPrompt('deploy-and-debug', {
     file: z.string().optional().describe(
       'Workspace-relative path to the .rb source file. If omitted, the configured openblink.sourceFile is used.'
     ),
+    expected_behavior: z.string().optional().describe(
+      'What the program should do once running (used to verify the console output). Optional.'
+    ),
   },
-}, ({ file }) => ({
+}, ({ file, expected_behavior }) => ({
   messages: [{
     role: 'user' as const,
     content: {
       type: 'text' as const,
       text: [
-        `Deploy ${file ? `the mruby program "${file}"` : 'the configured mruby program'} to the connected OpenBlink device and verify it works:`,
+        PROMPT_CONTEXT,
         '',
-        '1. Check the device connection with get_device_info. If no device is connected, run scan_devices and connect_device first.',
-        `2. Validate the source with validate_ruby_code${file ? ` (file: "${file}")` : ''} and fix any syntax errors before deploying.`,
-        `3. Run build_and_blink${file ? ` with file "${file}"` : ''} to compile and transfer the program.`,
-        '4. If the build fails, inspect get_build_diagnostics, fix the reported errors, and retry.',
-        '5. After a successful transfer, use get_console_output to confirm the program produces the expected runtime output and report the results.',
-      ].join('\n'),
+        '## Task',
+        `Deploy ${file ? `the mruby program "${file}"` : 'the configured mruby program (openblink.sourceFile setting)'} to the OpenBlink device and verify it works.`,
+        expected_behavior ? `Expected behavior once running: ${expected_behavior}` : '',
+        '',
+        '## Procedure',
+        '1. Call get_device_info. If state is not "connected": call scan_devices, then connect_device with the deviceId of the discovered OpenBlink device. If several devices are found and the choice is ambiguous, list them and ask the user rather than guessing.',
+        `2. Call validate_ruby_code${file ? ` with file "${file}"` : ''}. If it reports syntax errors, fix them in the source file first (minimal edits) and re-validate.`,
+        `3. Call build_and_blink${file ? ` with file "${file}"` : ''}. On success note compileTime, transferTime, and programSize. If the result says compiledWithoutTransfer, the code is fine but no device was connected — go back to step 1.`,
+        '4. If the build fails: call get_build_diagnostics, fix exactly the reported errors (line/column are given), re-validate, and retry the build. Maximum 3 fix-and-retry cycles; after that stop and report what still fails.',
+        '5. After a successful transfer, wait a moment, then call get_console_output.' + (expected_behavior ? ' Compare the output against the expected behavior above.' : ' Check for runtime errors or unexpected silence.'),
+        '6. If the console shows a runtime error, fix the code and repeat from step 2 (this also counts toward the 3-cycle limit).',
+        '',
+        '## Success criteria',
+        'build_and_blink reported success with a transfer, and the console output shows the program running' + (expected_behavior ? ' with the expected behavior.' : ' without errors.'),
+      ].filter(line => line !== '').join('\n'),
     },
   }],
 }));
@@ -1909,13 +1956,21 @@ server.registerPrompt('fix-build-errors', {
     content: {
       type: 'text' as const,
       text: [
-        'The last OpenBlink build failed. Diagnose and fix it:',
+        PROMPT_CONTEXT,
         '',
-        '1. Call get_build_diagnostics to retrieve the error details (file, line, column, message, suggestions).',
-        '2. Read get_board_reference to confirm which APIs the selected board actually provides — do not invent methods.',
-        '3. Fix the reported issues in the source file, keeping changes minimal.',
-        '4. Verify the fix with validate_ruby_code, then redeploy with build_and_blink.',
-        '5. Confirm the program runs correctly using get_console_output.',
+        '## Task',
+        'The last OpenBlink build failed. Diagnose the failure and fix the source file so it builds and runs.',
+        '',
+        '## Procedure',
+        '1. Call get_build_diagnostics. It returns the failing file plus each error\'s line, column, message, and (when available) a suggested fix. If it reports no diagnostics, call get_build_status to check whether a build ever ran, and report that instead of guessing.',
+        '2. Call get_board_reference BEFORE editing. Many "build" failures are actually calls to methods the selected board does not provide — verify every hardware API used by the source against the reference.',
+        '3. Fix exactly the reported problems with minimal edits. Do not restructure working code, rename identifiers, or "improve" style while fixing errors.',
+        '4. Verify with validate_ruby_code, then rebuild with build_and_blink.',
+        '5. If the build fails again with NEW errors, repeat from step 1. If it fails with the SAME errors twice, stop and report the diagnostics verbatim — do not keep guessing.',
+        '6. On success, call get_console_output to confirm the program runs without runtime errors.',
+        '',
+        '## Success criteria',
+        'build_and_blink succeeds and the console output shows no errors.',
       ].join('\n'),
     },
   }],
@@ -1933,13 +1988,51 @@ server.registerPrompt('write-board-program', {
     content: {
       type: 'text' as const,
       text: [
+        PROMPT_CONTEXT,
+        '',
+        '## Task',
         `Write an mruby program for the currently selected OpenBlink board that does the following: ${task}`,
         '',
-        'Requirements:',
-        '1. First call get_board_reference and use ONLY the classes and methods documented there — do not invent APIs.',
-        '2. Structure the program as an infinite loop where appropriate and keep it small (it runs on a microcontroller with limited RAM).',
-        '3. Validate the code with validate_ruby_code before deploying.',
-        '4. Deploy with build_and_blink and verify the behavior via get_console_output.',
+        '## Procedure',
+        '1. Call get_board_reference FIRST and read it fully. Use ONLY the classes and methods documented there. If the task requires a capability the board does not document (e.g. it asks for sound but the board has no speaker API), say so and propose the closest achievable alternative instead of inventing an API.',
+        '2. Write the program: keep it small, use an explicit `while true ... end` loop with a sleep for continuous behavior, and add a short `puts` at startup so the console proves the program is alive.',
+        '3. Validate with validate_ruby_code (pass the code directly via the code parameter, or the file if you saved one). Fix any syntax errors.',
+        '4. Ensure a device is connected (get_device_info; scan_devices + connect_device if not), then deploy with build_and_blink.',
+        '5. Verify with get_console_output that the startup message appears and the behavior matches the task. Fix and redeploy if needed (maximum 3 cycles).',
+        '',
+        '## Success criteria',
+        'The program is deployed, the console shows the startup message, and the observed behavior matches the task description.',
+      ].join('\n'),
+    },
+  }],
+}));
+
+server.registerPrompt('troubleshoot-connection', {
+  title: 'Troubleshoot BLE Connection',
+  description: 'Systematically diagnose why the OpenBlink device cannot be found or connected over BLE.',
+  argsSchema: {},
+}, () => ({
+  messages: [{
+    role: 'user' as const,
+    content: {
+      type: 'text' as const,
+      text: [
+        PROMPT_CONTEXT,
+        '',
+        '## Task',
+        'The OpenBlink device cannot be found or the BLE connection keeps failing. Diagnose the problem step by step and either fix it or tell the user exactly what to do.',
+        '',
+        '## Procedure',
+        '1. Call get_device_info to capture the current state (disconnected / connecting / connected) and note any deviceName/MTU from a previous session.',
+        '2. Call scan_devices with timeout 15000. Three possible outcomes:',
+        '   a. No devices found → the problem is on the device/host side. Tell the user to check, in this order: the device is powered on; the device firmware is an OpenBlink build (it must advertise the OpenBlink BLE service); the device is within a few meters; Bluetooth is enabled on this computer; no other host (phone/other laptop) is currently connected to the device, since OpenBlink devices accept only one connection.',
+        '   b. Devices found but connect_device fails → retry connect_device once with timeout 30000. If it still fails, report the exact error text from the tool and suggest power-cycling the device.',
+        '   c. Scan itself errors → the local Bluetooth stack is the problem. Report the error text; on Linux mention that the extension needs Bluetooth permissions (e.g. setcap on the VS Code binary or running with appropriate privileges).',
+        '3. After any successful connect_device, confirm with get_device_info (state must be "connected" and MTU > 0), then run soft_reset only if the user reports the device is unresponsive despite being connected.',
+        '4. Summarize: what was tried, what the tools returned verbatim, the most likely root cause, and the single next action for the user.',
+        '',
+        '## Constraints',
+        'Never claim the device is broken based on one failed attempt. Never retry the same failing tool more than twice.',
       ].join('\n'),
     },
   }],

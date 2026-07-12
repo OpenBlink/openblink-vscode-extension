@@ -323,10 +323,19 @@ Reusable prompt templates are exposed as slash commands in VS Code chat
 (`/mcp.openblink.<name>`):
 
 - `deploy-and-debug` — guided compile → transfer → verify workflow
-  (optional `file` argument).
+  (optional `file` and `expected_behavior` arguments).
 - `fix-build-errors` — diagnose and fix the most recent failed build.
 - `write-board-program` — write a new mruby program for the selected
   board using only documented APIs (`task` argument).
+- `troubleshoot-connection` — systematic BLE connection diagnosis with
+  outcome-specific guidance (no devices found, connect failures,
+  Bluetooth stack errors).
+
+The prompt texts are model-agnostic: each one embeds a shared context
+block (mruby/c language subset, board-reference-only APIs, bytecode
+size limits, bounded retry rules) plus explicit procedures, success
+criteria, and stop conditions, so they work with any MCP client and
+model, not just VS Code Copilot.
 
 ### Elicitation (VS Code 1.101+)
 
