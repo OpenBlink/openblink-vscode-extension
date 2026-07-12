@@ -811,6 +811,9 @@ export class BleManager {
   async dispose(): Promise<void> {
     this.stopKeepAlive();
     this.transition('disposed');
+    // Invalidate any in-flight connection attempt so it cannot start a
+    // keep-alive timer after disposal.
+    this.connectionEpoch++;
     this.userInitiatedDisconnect = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
