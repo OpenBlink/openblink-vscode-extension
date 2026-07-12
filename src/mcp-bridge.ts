@@ -344,6 +344,7 @@ function createThrottler(
 ): Throttler {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
+  let inFlightPromise: Promise<void> | undefined;
   let pending = false;
   let disposed = false;
 
@@ -358,17 +359,21 @@ function createThrottler(
     if (disposed) { return; }
     if (inFlight) { pending = true; return; }
     inFlight = true;
-    try {
-      await flusher();
-    } catch (err) {
-      log(`[MCP] ${label} flush error: ${errorMessage(err)}`);
-    } finally {
-      inFlight = false;
-      if (!disposed && pending) {
-        pending = false;
-        scheduleTimer();
+    inFlightPromise = (async () => {
+      try {
+        await flusher();
+      } catch (err) {
+        log(`[MCP] ${label} flush error: ${errorMessage(err)}`);
+      } finally {
+        inFlight = false;
+        inFlightPromise = undefined;
+        if (!disposed && pending) {
+          pending = false;
+          scheduleTimer();
+        }
       }
-    }
+    })();
+    await inFlightPromise;
   };
 
   return {
@@ -379,6 +384,10 @@ function createThrottler(
     },
     flushNow: async () => {
       if (timer) { clearTimeout(timer); timer = undefined; }
+      // Wait for any in-flight flush so the final write is never skipped
+      // (a skipped write would otherwise only be retried by a timer that
+      // dispose() may cancel before it fires).
+      while (inFlightPromise) { await inFlightPromise; }
       await runFlush();
     },
     dispose: () => {
@@ -1067,6 +1076,9 @@ export function markBuildCompleted(requestId: string, success: boolean): void {
  * connection state and console lines) after the extension host shuts down.
  */
 export async function flushAll(): Promise<void> {
+  // Let any in-flight trigger/command handler finish so its result write
+  // is enqueued before the bridge is disabled by dispose().
+  await consumeChain;
   await statusThrottler.flushNow();
   await consoleThrottler.flushNow();
   await ipcWriteChain;
