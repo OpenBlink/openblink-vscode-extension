@@ -144,6 +144,14 @@ export class BleManager {
   private consoleDataHandler: ((data: Buffer) => void) | null = null;
   /** @brief Handle for the pending reconnect timer, if any. */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * @brief Monotonic counter identifying the current connection attempt.
+   *
+   * Each connect/disconnect bumps the epoch; an in-flight connectToDevice
+   * aborts when its captured epoch no longer matches, so a stale reconnect
+   * callback cannot race with a newer user-initiated connection.
+   */
+  private connectionEpoch = 0;
   /** @brief Whether a BLE scan is currently active. */
   private _isScanning = false;
   /** @brief Devices discovered during the current or most recent scan. */
@@ -443,6 +451,7 @@ export class BleManager {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    const epoch = ++this.connectionEpoch;
     this.userInitiatedDisconnect = false;
     this.reconnectAttempts = 0;
 
@@ -457,7 +466,7 @@ export class BleManager {
       // Stop scanning if active
       await this.stopScan();
 
-      await this.connectToDevice(info.peripheral);
+      await this.connectToDevice(info.peripheral, epoch);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.log(`[BLE] Error: ${msg}`);
@@ -489,7 +498,7 @@ export class BleManager {
    * @throws Error if the connection times out, or the OpenBlink service or
    *         required characteristics are missing.
    */
-  private async connectToDevice(device: NoblePeripheral): Promise<void> {
+  private async connectToDevice(device: NoblePeripheral, epoch: number): Promise<void> {
     // Connect with timeout to avoid hanging when the device is not advertising
     let connectTimer: ReturnType<typeof setTimeout> | null = null;
     try {
@@ -507,6 +516,11 @@ export class BleManager {
       throw error;
     } finally {
       if (connectTimer) { clearTimeout(connectTimer); }
+    }
+    if (epoch !== this.connectionEpoch) {
+      // A newer connection attempt superseded this one while awaiting.
+      try { await device.disconnectAsync(); } catch { /* ignore */ }
+      throw new Error(l10n.t('Connection attempt superseded'));
     }
     this.currentDevice = device;
 
@@ -558,6 +572,9 @@ export class BleManager {
       // MTU negotiation
       await this.negotiateMTU(device);
 
+      if (epoch !== this.connectionEpoch) {
+        throw new Error(l10n.t('Connection attempt superseded'));
+      }
       this.transition('connected');
       this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
 
@@ -702,10 +719,14 @@ export class BleManager {
 
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
-      if (this.userInitiatedDisconnect || !this.currentDevice) { return; }
+      // Abort when a user-initiated connect/disconnect took over while this
+      // callback was pending in the event loop (the timer can fire before
+      // connectById gets a chance to clear it).
+      if (this.userInitiatedDisconnect || !this.currentDevice || this.phase !== 'reconnecting') { return; }
+      const epoch = ++this.connectionEpoch;
 
       try {
-        await this.connectToDevice(this.currentDevice);
+        await this.connectToDevice(this.currentDevice, epoch);
         this.reconnectAttempts = 0;
         this.log(`[BLE] ${l10n.t('Reconnected successfully')}`);
       } catch {
@@ -733,6 +754,7 @@ export class BleManager {
    */
   async disconnect(): Promise<void> {
     this.stopKeepAlive();
+    this.connectionEpoch++;
     this.userInitiatedDisconnect = true;
     this.reconnectAttempts = getBleMaxReconnectAttempts();
 
