@@ -1929,7 +1929,7 @@ server.registerPrompt('deploy-and-debug', {
         '',
         '## Task',
         `Deploy ${file ? `the mruby program "${file}"` : 'the configured mruby program (openblink.sourceFile setting)'} to the OpenBlink device and verify it works.`,
-        expected_behavior ? `Expected behavior once running: ${expected_behavior}` : '',
+        ...(expected_behavior ? [`Expected behavior once running: ${expected_behavior}`] : []),
         '',
         '## Procedure',
         '1. Call get_device_info. If state is not "connected": call scan_devices, then connect_device with the deviceId of the discovered OpenBlink device. If several devices are found and the choice is ambiguous, list them and ask the user rather than guessing.',
@@ -1941,7 +1941,7 @@ server.registerPrompt('deploy-and-debug', {
         '',
         '## Success criteria',
         'build_and_blink reported success with a transfer, and the console output shows the program running' + (expected_behavior ? ' with the expected behavior.' : ' without errors.'),
-      ].filter(line => line !== '').join('\n'),
+      ].join('\n'),
     },
   }],
 }));
