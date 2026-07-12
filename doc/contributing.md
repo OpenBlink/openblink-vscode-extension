@@ -90,6 +90,22 @@ The `make` command automatically checks for `emcc`, `ruby`, and `rake` before bu
 The mruby cross-compilation settings are in `mruby_build_config.rb`.
 See [Build System](build-system.md) for details.
 
+## TypeScript Toolchain
+
+The project compiles and type-checks with **TypeScript 7** (the native compiler) while
+tooling that still requires the TypeScript 6 compiler API uses the official
+compatibility package:
+
+- `@typescript/native` (npm alias of `typescript@7`) provides the `tsc` binary used by
+  `npx tsc --noEmit -p .` and `npm run compile-tests`.
+- `typescript` (npm alias of `@typescript/typescript6`) re-exports the TypeScript 6 API
+  and is consumed by `ts-loader` (webpack) and `typescript-eslint`, which do not yet
+  support the TypeScript 7 API. It also provides a `tsc6` binary for comparison runs.
+
+For the editor experience, install the official
+[TypeScript 7 extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.native-preview)
+for VS Code (it will become the default experience once installed).
+
 ## Code Style
 
 - TypeScript with strict mode
