@@ -62,7 +62,7 @@ type ConnectionPhase =
  */
 const CONNECTION_TRANSITIONS: Record<ConnectionPhase, readonly ConnectionPhase[]> = {
   disconnected: ['connecting', 'disposed'],
-  connecting: ['connected', 'disconnected', 'disposed'],
+  connecting: ['connected', 'reconnecting', 'disconnected', 'disposed'],
   connected: ['transferring', 'reconnecting', 'disconnected', 'disposed'],
   transferring: ['connected', 'reconnecting', 'disconnected', 'disposed'],
   reconnecting: ['connecting', 'connected', 'reconnecting', 'disconnected', 'disposed'],
@@ -179,7 +179,11 @@ export class BleManager {
   get negotiatedMTU(): number { return this._negotiatedMTU; }
   /** @brief Enter/leave the transferring phase to pause heartbeat during firmware transfer. */
   set isTransferring(value: boolean) {
-    this.transition(value ? 'transferring' : 'connected');
+    if (value) {
+      this.transition('transferring');
+    } else if (this.phase === 'transferring') {
+      this.transition('connected');
+    }
   }
   /** @brief Whether a device is currently connected and ready. */
   get isConnected(): boolean {
@@ -430,7 +434,7 @@ export class BleManager {
    * @throws Error if the device is not found or connection fails.
    */
   async connectById(deviceId: string): Promise<void> {
-    if (!this.transition('connecting')) {
+    if (this.phase === 'connecting' || !this.transition('connecting')) {
       return;
     }
     this.userInitiatedDisconnect = false;
