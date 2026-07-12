@@ -39,6 +39,51 @@ interface NobleWithState {
   removeListener(event: 'discover', callback: (peripheral: Peripheral) => void): void;
 }
 
+/**
+ * @brief Internal connection lifecycle phase.
+ *
+ * Extends the public {@link ConnectionState} with `transferring` (a
+ * sub-state of `connected` during firmware transfer) and `disposed`.
+ */
+type ConnectionPhase =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'transferring'
+  | 'reconnecting'
+  | 'disposed';
+
+/**
+ * @brief Allowed connection phase transitions.
+ *
+ * Any transition not listed here is rejected (and logged), structurally
+ * preventing conflicting operations such as starting a transfer while
+ * disconnected or reviving a disposed manager.
+ */
+const CONNECTION_TRANSITIONS: Record<ConnectionPhase, readonly ConnectionPhase[]> = {
+  disconnected: ['connecting', 'disposed'],
+  connecting: ['connected', 'disconnected', 'disposed'],
+  connected: ['transferring', 'reconnecting', 'disconnected', 'disposed'],
+  transferring: ['connected', 'reconnecting', 'disconnected', 'disposed'],
+  reconnecting: ['connecting', 'connected', 'reconnecting', 'disconnected', 'disposed'],
+  disposed: [],
+};
+
+/**
+ * @brief Map an internal connection phase to the public {@link ConnectionState}.
+ *
+ * `transferring` is reported as `connected`; `disposed` as `disconnected`.
+ */
+function toPublicState(phase: ConnectionPhase): ConnectionState {
+  switch (phase) {
+    case 'connecting': return 'connecting';
+    case 'connected':
+    case 'transferring': return 'connected';
+    case 'reconnecting': return 'reconnecting';
+    default: return 'disconnected';
+  }
+}
+
 /** @brief Lazily resolved Noble module instance. */
 let _noble: NobleWithState | undefined;
 
@@ -85,12 +130,10 @@ export class BleManager {
   private negotiatedMtuCharacteristic: NobleCharacteristic | null = null;
   /** @brief Heartbeat timer for BLE keep-alive. */
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  /** @brief Flag to pause heartbeat during firmware transfer. */
-  private _isTransferring = false;
   /** @brief Currently connected peripheral, or null if disconnected. */
   private currentDevice: NoblePeripheral | null = null;
-  /** @brief Current connection state. */
-  private _connectionState: ConnectionState = 'disconnected';
+  /** @brief Current connection lifecycle phase (internal state machine). */
+  private phase: ConnectionPhase = 'disconnected';
   /** @brief Number of reconnection attempts performed so far. */
   private reconnectAttempts = 0;
   /** @brief Flag to suppress auto-reconnect after a user-initiated disconnect. */
@@ -99,10 +142,6 @@ export class BleManager {
   private _negotiatedMTU = getBleDefaultMtu();
   /** @brief Bound handler for console data events, stored for proper removal. */
   private consoleDataHandler: ((data: Buffer) => void) | null = null;
-  /** @brief Guard flag to prevent concurrent connectById() calls. */
-  private _isConnecting = false;
-  /** @brief Whether the manager has been disposed. */
-  private _disposed = false;
   /** @brief Handle for the pending reconnect timer, if any. */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** @brief Whether a BLE scan is currently active. */
@@ -135,13 +174,17 @@ export class BleManager {
   readonly onDeviceDiscovered = this._onDeviceDiscovered.event;
 
   /** @brief Current connection state. */
-  get connectionState(): ConnectionState { return this._connectionState; }
+  get connectionState(): ConnectionState { return toPublicState(this.phase); }
   /** @brief Negotiated BLE MTU size in bytes. */
   get negotiatedMTU(): number { return this._negotiatedMTU; }
-  /** @brief Set transferring flag to pause heartbeat during firmware transfer. */
-  set isTransferring(value: boolean) { this._isTransferring = value; }
+  /** @brief Enter/leave the transferring phase to pause heartbeat during firmware transfer. */
+  set isTransferring(value: boolean) {
+    this.transition(value ? 'transferring' : 'connected');
+  }
   /** @brief Whether a device is currently connected and ready. */
-  get isConnected(): boolean { return this._connectionState === 'connected' && this.currentDevice !== null; }
+  get isConnected(): boolean {
+    return (this.phase === 'connected' || this.phase === 'transferring') && this.currentDevice !== null;
+  }
   /** @brief Whether a BLE scan is currently active. */
   get isScanning(): boolean { return this._isScanning; }
   /** @brief Current reconnect attempt count and maximum for UI display. */
@@ -162,13 +205,49 @@ export class BleManager {
   getProgramCharacteristic(): NobleCharacteristic | null { return this.programCharacteristic; }
 
   /**
-   * @brief Update the connection state and notify listeners.
-   * @param state  New connection state.
+   * @brief Attempt a connection phase transition.
+   *
+   * Transitions not allowed by {@link CONNECTION_TRANSITIONS} are rejected
+   * and logged. Listeners are notified only when the *public* connection
+   * state actually changes (e.g. `connected` -> `transferring` is silent).
+   *
+   * @param to  Target phase.
+   * @returns   `true` if the transition was applied (or was a no-op).
    */
-  private setConnectionState(state: ConnectionState): void {
-    if (this._disposed) { return; }
-    this._connectionState = state;
-    this._onConnectionStateChanged.fire(state);
+  private transition(to: ConnectionPhase): boolean {
+    if (this.phase === to) { return true; }
+    if (!CONNECTION_TRANSITIONS[this.phase].includes(to)) {
+      this.log(`[BLE] Ignored invalid state transition: ${this.phase} -> ${to}`);
+      return false;
+    }
+    const previousPublic = toPublicState(this.phase);
+    this.phase = to;
+    if (to === 'disposed') { return true; }
+    const nextPublic = toPublicState(to);
+    if (previousPublic !== nextPublic) {
+      this._onConnectionStateChanged.fire(nextPublic);
+    }
+    return true;
+  }
+
+  /**
+   * @brief Release all connection-scoped resources.
+   *
+   * Centralises the cleanup previously duplicated across connect failure,
+   * disconnect handling, and disposal: removes the console listener, drops
+   * characteristic references, and resets the negotiated MTU.
+   *
+   * @param clearDevice  Also drop the current peripheral reference.
+   */
+  private cleanupConnection(clearDevice: boolean): void {
+    this.removeConsoleListener();
+    this.programCharacteristic = null;
+    this.consoleCharacteristic = null;
+    this.negotiatedMtuCharacteristic = null;
+    this._negotiatedMTU = getBleDefaultMtu();
+    if (clearDevice) {
+      this.currentDevice = null;
+    }
   }
 
   /**
@@ -176,7 +255,7 @@ export class BleManager {
    * @param message  Log message text.
    */
   private log(message: string): void {
-    if (this._disposed) { return; }
+    if (this.phase === 'disposed') { return; }
     this._onLog.fire(message);
   }
 
@@ -295,6 +374,52 @@ export class BleManager {
   }
 
   /**
+   * @brief Wait for the current scan to complete, event-driven.
+   *
+   * Resolves when scanning stops (auto-timeout or {@link stopScan}), when
+   * the optional target device is discovered, or when the optional timeout
+   * elapses — whichever comes first. Resolves immediately if no scan is
+   * active or the target device is already discovered.
+   *
+   * @param options.deviceId   Resolve early once this device is discovered.
+   * @param options.timeoutMs  Upper bound on the wait in milliseconds.
+   */
+  async waitForScanCompletion(options: { deviceId?: string; timeoutMs?: number } = {}): Promise<void> {
+    if (!this._isScanning) { return; }
+    if (options.deviceId !== undefined && this._discoveredDevices.has(options.deviceId)) { return; }
+
+    await new Promise<void>((resolve) => {
+      const disposables: { dispose(): void }[] = [];
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let settled = false;
+      const finish = () => {
+        if (settled) { return; }
+        settled = true;
+        for (const d of disposables) { d.dispose(); }
+        if (timer) { clearTimeout(timer); }
+        resolve();
+      };
+
+      disposables.push(this.onScanningStateChanged((scanning) => {
+        if (!scanning) { finish(); }
+      }));
+      if (options.deviceId !== undefined) {
+        const targetId = options.deviceId;
+        disposables.push(this.onDeviceDiscovered((info) => {
+          if (info.id === targetId) { finish(); }
+        }));
+      }
+      if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
+        timer = setTimeout(finish, options.timeoutMs);
+      }
+
+      // Guard against the scan having stopped between the check above and
+      // listener registration.
+      if (!this._isScanning) { finish(); }
+    });
+  }
+
+  /**
    * @brief Connect to a device by its peripheral ID.
    *
    * Looks up the device in the discovered devices map or in
@@ -305,11 +430,9 @@ export class BleManager {
    * @throws Error if the device is not found or connection fails.
    */
   async connectById(deviceId: string): Promise<void> {
-    if (this._isConnecting || this.isConnected) {
+    if (!this.transition('connecting')) {
       return;
     }
-    this._isConnecting = true;
-    this.setConnectionState('connecting');
     this.userInitiatedDisconnect = false;
     this.reconnectAttempts = 0;
 
@@ -331,17 +454,10 @@ export class BleManager {
       // Clean up BLE connection to prevent resource leaks when post-connect setup fails
       if (this.currentDevice) {
         try { await this.currentDevice.disconnectAsync(); } catch { /* ignore */ }
-        this.currentDevice = null;
       }
-      this.removeConsoleListener();
-      this.programCharacteristic = null;
-      this.consoleCharacteristic = null;
-      this.negotiatedMtuCharacteristic = null;
-      this._negotiatedMTU = getBleDefaultMtu();
-      this.setConnectionState('disconnected');
+      this.cleanupConnection(true);
+      this.transition('disconnected');
       throw error;
-    } finally {
-      this._isConnecting = false;
     }
   }
 
@@ -432,7 +548,7 @@ export class BleManager {
       // MTU negotiation
       await this.negotiateMTU(device);
 
-      this.setConnectionState('connected');
+      this.transition('connected');
       this.log(`[BLE] ${l10n.t('Connected to device: {0}', device.advertisement?.localName ?? 'Unknown')}`);
 
       // Start keep-alive heartbeat
@@ -489,13 +605,13 @@ export class BleManager {
    * and prevent the BLE supervision timeout from expiring.
    */
   private async sendHeartbeat(): Promise<void> {
-    if (this._connectionState !== 'connected') {
+    if (this.phase !== 'connected') {
       return;
     }
     if (this.currentDevice?.state !== 'connected') {
       return;
     }
-    if (!this.negotiatedMtuCharacteristic || this._isTransferring) {
+    if (!this.negotiatedMtuCharacteristic) {
       return;
     }
     try {
@@ -536,23 +652,19 @@ export class BleManager {
    */
   private handleDisconnect(): void {
     // Prevent duplicate execution if already disconnected or reconnecting
-    if (this._connectionState === 'disconnected' || this._connectionState === 'reconnecting') {
+    if (this.phase === 'disconnected' || this.phase === 'reconnecting' || this.phase === 'disposed') {
       return;
     }
     this.stopKeepAlive();
     this.log(`[BLE] ${l10n.t('Device disconnected: {0}', this.deviceName)}`);
 
-    this.removeConsoleListener();
-    this.programCharacteristic = null;
-    this.consoleCharacteristic = null;
-    this.negotiatedMtuCharacteristic = null;
-    this._negotiatedMTU = getBleDefaultMtu();
+    this.cleanupConnection(false);
 
     if (this.userInitiatedDisconnect) {
       this.userInitiatedDisconnect = false;
       this.reconnectAttempts = 0;
       this.currentDevice = null;
-      this.setConnectionState('disconnected');
+      this.transition('disconnected');
       return;
     }
 
@@ -562,7 +674,7 @@ export class BleManager {
       this.log(`[BLE] ${l10n.t('Max reconnection attempts reached')}`);
       this.currentDevice = null;
       this.reconnectAttempts = 0;
-      this.setConnectionState('disconnected');
+      this.transition('disconnected');
     }
   }
 
@@ -575,7 +687,7 @@ export class BleManager {
   private attemptReconnect(): void {
     this.reconnectAttempts++;
     const delay = getBleInitialReconnectDelay() * Math.pow(2, this.reconnectAttempts - 1);
-    this.setConnectionState('reconnecting');
+    this.transition('reconnecting');
     this.log(`[BLE] ${l10n.t('Reconnecting ({0}/{1})...', String(this.reconnectAttempts), String(getBleMaxReconnectAttempts()))}`);
 
     this.reconnectTimer = setTimeout(async () => {
@@ -597,7 +709,7 @@ export class BleManager {
           this.log(`[BLE] ${l10n.t('Max reconnection attempts reached')}`);
           this.currentDevice = null;
           this.reconnectAttempts = 0;
-          this.setConnectionState('disconnected');
+          this.transition('disconnected');
         }
       }
     }, delay);
@@ -629,15 +741,10 @@ export class BleManager {
     }
 
     // Ensure cleanup even if disconnectAsync did not fire the event
-    if (this._connectionState !== 'disconnected') {
-      this.removeConsoleListener();
-      this.programCharacteristic = null;
-      this.consoleCharacteristic = null;
-      this.negotiatedMtuCharacteristic = null;
-      this.currentDevice = null;
-      this._negotiatedMTU = getBleDefaultMtu();
+    if (this.phase !== 'disconnected' && this.phase !== 'disposed') {
+      this.cleanupConnection(true);
       this.reconnectAttempts = 0;
-      this.setConnectionState('disconnected');
+      this.transition('disconnected');
     }
     this.log(`[BLE] ${l10n.t('Disconnected from device')}`);
   }
@@ -671,7 +778,7 @@ export class BleManager {
    */
   async dispose(): Promise<void> {
     this.stopKeepAlive();
-    this._disposed = true;
+    this.transition('disposed');
     this.userInitiatedDisconnect = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

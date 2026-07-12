@@ -531,21 +531,11 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           ui.log(`[BLE] ${l10n.t('Scanning to find saved device...')}`);
           await bleManager.startScan();
-          // Wait for the device to appear or the scan to end, with an explicit timeout
-          // to prevent the interval from leaking if scanning never completes.
-          await new Promise<void>((resolve) => {
-            const timeoutMs = BLE_CONSTANTS.SCAN_TIMEOUT + BLE_CONSTANTS.SCAN_GRACE_PERIOD;
-            const deadline = setTimeout(() => {
-              clearInterval(checkInterval);
-              resolve();
-            }, timeoutMs);
-            const checkInterval = setInterval(() => {
-              if (bleManager.discoveredDevices.has(deviceId) || !bleManager.isScanning) {
-                clearInterval(checkInterval);
-                clearTimeout(deadline);
-                resolve();
-              }
-            }, BLE_CONSTANTS.DISCOVERY_POLL_INTERVAL);
+          // Wait for the device to appear or the scan to end, with an explicit
+          // timeout as an upper bound in case scanning never completes.
+          await bleManager.waitForScanCompletion({
+            deviceId,
+            timeoutMs: BLE_CONSTANTS.SCAN_TIMEOUT + BLE_CONSTANTS.SCAN_GRACE_PERIOD,
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -1115,16 +1105,7 @@ async function handleMcpScanCommand(command: { requestId: string; timeout?: numb
     // whichever comes first — avoids the dual-timer issue where the MCP timeout
     // and BleManager's internal scan timeout could conflict.
     const scanTimeout = command.timeout ?? 10000;
-    await new Promise<void>(resolve => {
-      const deadline = setTimeout(() => { clearInterval(poll); resolve(); }, scanTimeout);
-      const poll = setInterval(() => {
-        if (!bleManager.isScanning) {
-          clearInterval(poll);
-          clearTimeout(deadline);
-          resolve();
-        }
-      }, 200);
-    });
+    await bleManager.waitForScanCompletion({ timeoutMs: scanTimeout });
 
     // Ensure scan is fully stopped
     await bleManager.stopScan();
