@@ -39,11 +39,27 @@
  *  12. `get_build_status` — Check the status of an in-progress or recent build.
  *  13. `cancel_build` — Cancel a pending or in-progress build.
  *
+ * Registered MCP resources (read-only views over the same IPC data):
+ *   - `openblink://device/status`     — Live device connection status (JSON).
+ *   - `openblink://console/recent`    — Recent device console output (text, subscribable).
+ *   - `openblink://board/reference`   — Selected board API reference (Markdown).
+ *   - `openblink://build/status`      — Current build system status (JSON, subscribable).
+ *   - `openblink://build/diagnostics` — Last build diagnostics (JSON, subscribable).
+ *
+ * Registered MCP prompts (exposed as slash commands in VS Code chat):
+ *   - `deploy-and-debug`   — Guided compile/transfer/verify workflow.
+ *   - `fix-build-errors`   — Diagnose and fix the last failed build.
+ *   - `write-board-program` — Write a new mruby program for the selected board.
+ *
  * @see https://modelcontextprotocol.io/
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  SubscribeRequestSchema,
+  UnsubscribeRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -67,11 +83,21 @@ const DEBUG = (() => {
   return v === '1' || v === 'true' || v === 'yes';
 })();
 
-/** @brief Write a debug line to stderr when `OPENBLINK_MCP_DEBUG` is enabled. */
+/**
+ * @brief Write a debug line to stderr when `OPENBLINK_MCP_DEBUG` is enabled.
+ *
+ * When the MCP client is connected, the line is also forwarded as an MCP
+ * `notifications/message` logging notification so clients that surface
+ * server logs (e.g. VS Code's MCP output channel) can display it.
+ */
 function debug(msg: string): void {
-  if (DEBUG) {
-    process.stderr.write(`[openblink-mcp] ${new Date().toISOString()} ${msg}\n`);
-  }
+  if (!DEBUG) { return; }
+  process.stderr.write(`[openblink-mcp] ${new Date().toISOString()} ${msg}\n`);
+  try {
+    if (server?.isConnected()) {
+      void server.server.sendLoggingMessage({ level: 'debug', logger: 'openblink', data: msg }).catch(() => { /* ignore */ });
+    }
+  } catch { /* logging must never break tool execution */ }
 }
 
 // ============================================================================
@@ -330,13 +356,108 @@ function completeOperation(requestId: string): void {
 }
 
 // ============================================================================
+// Shared Helpers (board reference resolution, BLE scan)
+// ============================================================================
+
+/** @brief Result of resolving and validating the selected board's reference file. */
+type BoardReferenceResolution =
+  | { ok: true; displayName: string; refPath: string }
+  | { ok: false; error: string };
+
+/**
+ * @brief Resolve the selected board's API reference path from `status.json`.
+ *
+ * Validates the path to prevent arbitrary file reads via a tampered
+ * `status.json`:
+ *   1. Must not contain any '..' path components.
+ *   2. Must be a Markdown file (.md) to restrict to documentation.
+ *   3. Must reside inside the extension directory (OPENBLINK_EXTENSION_DIR).
+ */
+function resolveBoardReference(dir: string): BoardReferenceResolution {
+  const status = readJsonFile<{
+    board: { name: string; displayName: string; referencePath: string } | null;
+  }>(path.join(dir, 'status.json'));
+
+  if (!status?.board) {
+    return { ok: false, error: 'No board selected. Use the OpenBlink sidebar to select a board.' };
+  }
+
+  const referencePathInput = status.board.referencePath;
+  const normalizedRefPath = path.normalize(referencePathInput);
+  const refPathSegments = normalizedRefPath
+    .split(/[\\/]+/)
+    .filter((segment) => segment.length > 0);
+  const refPath = path.resolve(referencePathInput);
+  if (refPathSegments.includes('..') || path.extname(refPath).toLowerCase() !== '.md') {
+    return { ok: false, error: 'Board reference path is invalid or not a Markdown file.' };
+  }
+  const extensionDir = process.env.OPENBLINK_EXTENSION_DIR;
+  if (!extensionDir) {
+    return { ok: false, error: 'Extension directory is not configured. Cannot verify board reference path.' };
+  }
+  // Reject relative paths to prevent path traversal (SEC-07)
+  if (!path.isAbsolute(extensionDir)) {
+    return { ok: false, error: 'OPENBLINK_EXTENSION_DIR must be an absolute path.' };
+  }
+  const resolvedExtensionDir = path.resolve(extensionDir);
+  const relativeRefPath = path.relative(resolvedExtensionDir, refPath);
+  if (relativeRefPath === '..' || relativeRefPath.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRefPath)) {
+    return { ok: false, error: 'Board reference path is outside the extension directory.' };
+  }
+  return { ok: true, displayName: status.board.displayName, refPath };
+}
+
+/** @brief A BLE device discovered during a scan. */
+interface ScannedDevice {
+  id: string;
+  name: string;
+  rssi?: number;
+}
+
+/**
+ * @brief Run a BLE scan through the extension via file-based IPC.
+ *
+ * Writes a `scan` command to `command.json` and polls `command-result.json`
+ * for a result matching `requestId`. Returns `null` on timeout.
+ */
+async function performScan(
+  dir: string,
+  scanTimeoutMs: number,
+  requestId: string,
+): Promise<{ success: boolean; devices?: ScannedDevice[]; error?: string } | null> {
+  const command = {
+    type: 'scan',
+    requestId,
+    timeout: scanTimeoutMs,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (!writeJsonFile(path.join(dir, 'command.json'), command)) {
+    return { success: false, error: 'Failed to write scan command' };
+  }
+
+  const resultPath = path.join(dir, 'command-result.json');
+  return pollForResult<{
+    requestId: string;
+    success: boolean;
+    devices?: ScannedDevice[];
+    error?: string;
+  }>(resultPath, scanTimeoutMs + 5000, 200, requestId, 'requestId', () => isOperationCancelled(requestId));
+}
+
+// ============================================================================
 // MCP Server Setup
 // ============================================================================
 
 const server = new McpServer({
   name: 'OpenBlink',
+  title: 'OpenBlink',
   version: EXTENSION_VERSION,
 }, {
+  capabilities: {
+    logging: {},
+    resources: { subscribe: true, listChanged: true },
+  },
   instructions:
     'OpenBlink programs microcontrollers with mruby via BLE.\n' +
     '\n' +
@@ -361,7 +482,20 @@ const server = new McpServer({
     '\n' +
     '=== Utility Tools ===\n' +
     '- get_metrics — Cumulative build/transfer statistics\n' +
-    '- get_device_info — BLE connection status, MTU, device name',
+    '- get_device_info — BLE connection status, MTU, device name\n' +
+    '\n' +
+    '=== Resources ===\n' +
+    'Read-only resources mirror the tool data and can be attached as context:\n' +
+    '- openblink://device/status — live connection status (JSON)\n' +
+    '- openblink://console/recent — recent device console output (subscribable)\n' +
+    '- openblink://board/reference — selected board API reference (Markdown)\n' +
+    '- openblink://build/status — build system status (JSON, subscribable)\n' +
+    '- openblink://build/diagnostics — last build diagnostics (JSON, subscribable)\n' +
+    '\n' +
+    '=== Prompts ===\n' +
+    '- deploy-and-debug — guided compile/transfer/verify workflow\n' +
+    '- fix-build-errors — diagnose and fix the last failed build\n' +
+    '- write-board-program — write a new mruby program for the selected board',
 });
 
 // ----------------------------------------------------------------------------
@@ -369,6 +503,7 @@ const server = new McpServer({
 // ----------------------------------------------------------------------------
 
 server.registerTool('build_and_blink', {
+  title: 'Build & Blink',
   description:
     'Compile a Ruby (.rb) file with mruby and transfer the bytecode to a BLE-connected OpenBlink device. ' +
     'Call this after editing a .rb file to deploy changes to the hardware. ' +
@@ -523,6 +658,7 @@ server.registerTool('build_and_blink', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('get_device_info', {
+  title: 'Get Device Info',
   description:
     'Get the current BLE connection state and device information for the connected OpenBlink device. ' +
     'Returns connection state (disconnected/connecting/connected/reconnecting), device name, device ID, and negotiated MTU. ' +
@@ -581,6 +717,7 @@ server.registerTool('get_device_info', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('get_console_output', {
+  title: 'Get Console Output',
   description:
     'Get recent console output from the connected OpenBlink device. ' +
     'Returns up to 100 lines of the most recent [DEVICE] log messages. ' +
@@ -626,6 +763,7 @@ server.registerTool('get_console_output', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('get_metrics', {
+  title: 'Get Build Metrics',
   description:
     'Get cumulative build and transfer metrics for the OpenBlink extension. ' +
     'Returns the latest compile time, transfer time, program size, and min/avg/max statistics across recent builds. ' +
@@ -715,6 +853,7 @@ server.registerTool('get_metrics', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('get_board_reference', {
+  title: 'Get Board Reference',
   description:
     'Get the API reference documentation (Markdown) for the currently selected OpenBlink board. ' +
     'Returns the board name and the full reference Markdown content describing available APIs ' +
@@ -729,43 +868,14 @@ server.registerTool('get_board_reference', {
   },
 }, async () => {
     const dir = getIpcDir();
-    const status = readJsonFile<{
-      board: { name: string; displayName: string; referencePath: string } | null;
-    }>(path.join(dir, 'status.json'));
-
-    if (!status?.board) {
-      return { content: [{ type: 'text' as const, text: 'No board selected. Use the OpenBlink sidebar to select a board.' }] };
+    const resolved = resolveBoardReference(dir);
+    if (!resolved.ok) {
+      return { content: [{ type: 'text' as const, text: resolved.error }], isError: true };
     }
-
-    // Validate referencePath to prevent arbitrary file reads via a tampered status.json.
-    // 1. Must not contain any '..' path components.
-    // 2. Must be a Markdown file (.md) to restrict to documentation.
-    // 3. Must reside inside the extension directory (OPENBLINK_EXTENSION_DIR).
-    const referencePathInput = status.board.referencePath;
-    const normalizedRefPath = path.normalize(referencePathInput);
-    const refPathSegments = normalizedRefPath
-      .split(/[\\/]+/)
-      .filter((segment) => segment.length > 0);
-    const refPath = path.resolve(referencePathInput);
-    if (refPathSegments.includes('..') || path.extname(refPath).toLowerCase() !== '.md') {
-      return { content: [{ type: 'text' as const, text: `Board reference path is invalid or not a Markdown file.` }], isError: true };
-    }
-    const extensionDir = process.env.OPENBLINK_EXTENSION_DIR;
-    if (!extensionDir) {
-      return { content: [{ type: 'text' as const, text: `Extension directory is not configured. Cannot verify board reference path.` }], isError: true };
-    }
-    // Reject relative paths to prevent path traversal (SEC-07)
-    if (!path.isAbsolute(extensionDir)) {
-      return { content: [{ type: 'text' as const, text: `OPENBLINK_EXTENSION_DIR must be an absolute path.` }], isError: true };
-    }
-    const resolvedExtensionDir = path.resolve(extensionDir);
-    const relativeRefPath = path.relative(resolvedExtensionDir, refPath);
-    if (relativeRefPath === '..' || relativeRefPath.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRefPath)) {
-      return { content: [{ type: 'text' as const, text: `Board reference path is outside the extension directory.` }], isError: true };
-    }
+    const { displayName, refPath } = resolved;
     const refContent = readTextFile(refPath);
     if (!refContent) {
-      return { content: [{ type: 'text' as const, text: `Board "${status.board.displayName}" selected, but reference file not found at: ${refPath}` }] };
+      return { content: [{ type: 'text' as const, text: `Board "${displayName}" selected, but reference file not found at: ${refPath}` }] };
     }
 
     // Truncate to protect AI context window from excessively large reference files.
@@ -778,11 +888,11 @@ server.registerTool('get_board_reference', {
     // the raw Markdown in a separate view when desired (VS Code 1.103+).
     return {
       content: [
-        { type: 'text' as const, text: `# ${status.board.displayName}\n\n${safeContent}` },
+        { type: 'text' as const, text: `# ${displayName}\n\n${safeContent}` },
         {
           type: 'resource_link' as const,
           uri: pathToFileURL(refPath).href,
-          name: `${status.board.displayName} Reference`,
+          name: `${displayName} Reference`,
           description: 'Board API reference (Markdown)',
           mimeType: 'text/markdown',
         },
@@ -796,6 +906,7 @@ server.registerTool('get_board_reference', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('validate_ruby_code', {
+  title: 'Validate Ruby Code',
   description:
     'Validate Ruby syntax without compiling or transferring to a device. ' +
     'This is a lightweight check that catches syntax errors quickly without requiring a BLE connection. ' +
@@ -904,6 +1015,7 @@ server.registerTool('validate_ruby_code', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('scan_devices', {
+  title: 'Scan BLE Devices',
   description:
     'Scan for nearby BLE devices that support OpenBlink. ' +
     'Returns a list of discovered devices with their names and IDs. ' +
@@ -940,28 +1052,7 @@ server.registerTool('scan_devices', {
     registerOperation(requestId);
 
     try {
-      // Write scan command
-      const command = {
-        type: 'scan',
-        requestId,
-        timeout: customTimeout ?? 10000,
-        timestamp: new Date().toISOString(),
-      };
-
-      if (!writeJsonFile(path.join(dir, 'command.json'), command)) {
-        return formatErrorResponse(createError(ErrorCode.FILE_ACCESS_DENIED, 'Failed to write scan command'));
-      }
-
-      // Poll for command result
-      const resultPath = path.join(dir, 'command-result.json');
-      const timeout = (customTimeout ?? 10000) + 5000; // Scan time + buffer
-
-      const result = await pollForResult<{
-        requestId: string;
-        success: boolean;
-        devices?: Array<{ id: string; name: string; rssi?: number }>;
-        error?: string;
-      }>(resultPath, timeout, 200, requestId, 'requestId', () => isOperationCancelled(requestId));
+      const result = await performScan(dir, customTimeout ?? 10000, requestId);
 
       if (isOperationCancelled(requestId)) {
         return formatErrorResponse(createError(ErrorCode.OPERATION_CANCELLED, 'Scan was cancelled'));
@@ -1002,12 +1093,18 @@ server.registerTool('scan_devices', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('connect_device', {
+  title: 'Connect Device',
   description:
     'Connect to an OpenBlink BLE device by its ID. ' +
     'The device ID must be obtained from scan_devices first. ' +
+    'If deviceId is omitted and the client supports elicitation, a scan is performed ' +
+    'and the user is asked to pick a device. ' +
     'After connecting, use get_device_info to verify the connection.',
   inputSchema: {
-    deviceId: z.string().min(1).describe('The BLE device ID from scan_devices'),
+    deviceId: z.string().min(1).optional().describe(
+      'The BLE device ID from scan_devices. May be omitted when the MCP client ' +
+      'supports elicitation; the user is then asked to select a device interactively.'
+    ),
     timeout: z.number().int().min(5000).max(60000).optional().describe(
       'Connection timeout in milliseconds (default: 10000, max: 60000)'
     ),
@@ -1019,16 +1116,76 @@ server.registerTool('connect_device', {
     openWorldHint: false,
   },
 }, async ({ deviceId, timeout: customTimeout }) => {
-    if (!deviceId) {
-      return formatErrorResponse(createError(ErrorCode.INVALID_PARAMETER, 'deviceId is required'));
-    }
-
     let dir: string;
     try {
       dir = getIpcDir();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
+    }
+
+    if (!deviceId) {
+      // Without a deviceId, fall back to scan + elicitation so the user can
+      // pick a device interactively (supported by VS Code 1.101+).
+      if (!server.server.getClientCapabilities()?.elicitation) {
+        return formatErrorResponse(createError(
+          ErrorCode.INVALID_PARAMETER,
+          'deviceId is required',
+          'This MCP client does not support elicitation, so the device cannot be selected interactively. Run scan_devices and pass the deviceId explicitly.'
+        ));
+      }
+
+      const scanRequestId = `scan_${randomUUID()}`;
+      registerOperation(scanRequestId);
+      let scanResult: Awaited<ReturnType<typeof performScan>>;
+      try {
+        scanResult = await performScan(dir, 10000, scanRequestId);
+      } finally {
+        completeOperation(scanRequestId);
+      }
+
+      const devices = scanResult?.success ? (scanResult.devices ?? []) : [];
+      if (devices.length === 0) {
+        return formatErrorResponse(createError(
+          ErrorCode.DEVICE_NOT_FOUND,
+          'No OpenBlink devices found nearby',
+          scanResult?.error ?? 'Ensure the device is powered on and in range, then retry.'
+        ));
+      }
+
+      const labels = devices.map(d => `${d.name} (${d.id}${d.rssi !== undefined ? `, ${d.rssi}dBm` : ''})`);
+      let elicited;
+      try {
+        elicited = await server.server.elicitInput({
+          message: 'Select the OpenBlink device to connect to.',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              device: {
+                type: 'string',
+                title: 'Device',
+                description: 'Discovered OpenBlink BLE devices',
+                enum: devices.map(d => d.id),
+                enumNames: labels,
+              },
+            },
+            required: ['device'],
+          },
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return formatErrorResponse(createError(ErrorCode.INVALID_PARAMETER, 'Device selection failed', msg));
+      }
+
+      if (elicited.action !== 'accept' || typeof elicited.content?.device !== 'string') {
+        return formatErrorResponse(createError(
+          ErrorCode.OPERATION_CANCELLED,
+          'Device selection was declined or cancelled',
+          undefined,
+          'info'
+        ));
+      }
+      deviceId = elicited.content.device;
     }
 
     const requestId = `connect_${randomUUID()}`;
@@ -1095,6 +1252,7 @@ server.registerTool('connect_device', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('disconnect_device', {
+  title: 'Disconnect Device',
   description:
     'Disconnect from the currently connected OpenBlink device. ' +
     'This gracefully closes the BLE connection. Use this when finished working with the device.',
@@ -1161,6 +1319,7 @@ server.registerTool('disconnect_device', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('soft_reset', {
+  title: 'Soft Reset Device',
   description:
     'Execute a reset on the connected OpenBlink device. ' +
     'This triggers a full microcontroller reboot — the BLE connection will be dropped and the device will re-advertise. ' +
@@ -1234,6 +1393,7 @@ server.registerTool('soft_reset', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('get_build_diagnostics', {
+  title: 'Get Build Diagnostics',
   description:
     'Get detailed diagnostic information about the most recent build failure. ' +
     'Returns syntax errors, line numbers, column positions, and suggested fixes. ' +
@@ -1359,6 +1519,7 @@ server.registerTool('get_build_diagnostics', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('get_build_status', {
+  title: 'Get Build Status',
   description:
     'Check the current status of the build system. ' +
     'Returns whether a build is in progress, the last build result, and queue information. ' +
@@ -1455,6 +1616,7 @@ server.registerTool('get_build_status', {
 // ----------------------------------------------------------------------------
 
 server.registerTool('cancel_build', {
+  title: 'Cancel Build',
   description:
     'Cancel a pending or in-progress build. ' +
     'Use this if a build is taking too long or if you need to stop the current operation. ' +
@@ -1517,6 +1679,271 @@ server.registerTool('cancel_build', {
     }
   },
 );
+
+// ============================================================================
+// Resources
+// ============================================================================
+//
+// Read-only views over the same IPC data the tools use.  Clients can browse
+// these (VS Code: "MCP: Browse Resources"), attach them as chat context, and
+// subscribe to update notifications for the frequently-changing ones.
+
+/** @brief Maximum content size returned for any resource (bytes). */
+const MAX_RESOURCE_SIZE = 100_000;
+
+/** @brief Truncate resource text to a bounded size to protect client context windows. */
+function boundResourceText(text: string): string {
+  return text.length > MAX_RESOURCE_SIZE
+    ? text.slice(0, MAX_RESOURCE_SIZE) + '\n\n[Truncated — content exceeds 100 KB limit]'
+    : text;
+}
+
+/** @brief Read a JSON IPC file and wrap it as an MCP resource result. */
+function jsonIpcResource(uri: string, fileName: string, missingMessage: string): {
+  contents: Array<{ uri: string; mimeType: string; text: string }>;
+} {
+  const raw = readTextFile(path.join(getIpcDir(), fileName));
+  return {
+    contents: [{
+      uri,
+      mimeType: 'application/json',
+      text: raw !== null && raw.length > 0 ? boundResourceText(raw) : JSON.stringify({ available: false, message: missingMessage }),
+    }],
+  };
+}
+
+server.registerResource(
+  'device-status',
+  'openblink://device/status',
+  {
+    title: 'Device Status',
+    description: 'Live BLE connection state, selected board, and build metrics of the OpenBlink extension (JSON).',
+    mimeType: 'application/json',
+  },
+  async (uri) => jsonIpcResource(uri.href, 'status.json', 'The OpenBlink extension has not written status data yet. Is MCP enabled?'),
+);
+
+server.registerResource(
+  'build-status',
+  'openblink://build/status',
+  {
+    title: 'Build Status',
+    description: 'Current build system status: whether a build is in progress, queue length, and last build result (JSON).',
+    mimeType: 'application/json',
+  },
+  async (uri) => jsonIpcResource(uri.href, 'build-status.json', 'No build status recorded yet. Run build_and_blink first.'),
+);
+
+server.registerResource(
+  'build-diagnostics',
+  'openblink://build/diagnostics',
+  {
+    title: 'Build Diagnostics',
+    description: 'Detailed diagnostics of the most recent build: errors, line/column positions, and suggested fixes (JSON).',
+    mimeType: 'application/json',
+  },
+  async (uri) => jsonIpcResource(uri.href, 'build-diagnostics.json', 'No build diagnostics recorded yet. Run build_and_blink first.'),
+);
+
+server.registerResource(
+  'console-output',
+  'openblink://console/recent',
+  {
+    title: 'Device Console Output',
+    description: 'Recent console output from the connected OpenBlink device ([DEVICE] log lines). Subscribable for live updates.',
+    mimeType: 'text/plain',
+  },
+  async (uri) => {
+    const raw = readTextFile(path.join(getIpcDir(), 'openblink-console.log'));
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: 'text/plain',
+        text: raw !== null && raw.trim().length > 0
+          ? boundResourceText(raw)
+          : 'No console output available. The extension has not recorded any device output yet.',
+      }],
+    };
+  },
+);
+
+server.registerResource(
+  'board-reference',
+  'openblink://board/reference',
+  {
+    title: 'Board API Reference',
+    description: 'API reference (Markdown) for the currently selected OpenBlink board: available classes, methods, and examples.',
+    mimeType: 'text/markdown',
+  },
+  async (uri) => {
+    const resolved = resolveBoardReference(getIpcDir());
+    if (!resolved.ok) {
+      return { contents: [{ uri: uri.href, mimeType: 'text/markdown', text: resolved.error }] };
+    }
+    const refContent = readTextFile(resolved.refPath);
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: 'text/markdown',
+        text: refContent !== null
+          ? boundResourceText(`# ${resolved.displayName}\n\n${refContent}`)
+          : `Board "${resolved.displayName}" selected, but the reference file was not found.`,
+      }],
+    };
+  },
+);
+
+// ----------------------------------------------------------------------------
+// Resource update notifications (resources/subscribe)
+// ----------------------------------------------------------------------------
+
+/** @brief Map of subscribable resource URIs to the IPC file that backs them. */
+const SUBSCRIBABLE_RESOURCES: Record<string, string> = {
+  'openblink://device/status': 'status.json',
+  'openblink://build/status': 'build-status.json',
+  'openblink://build/diagnostics': 'build-diagnostics.json',
+  'openblink://console/recent': 'openblink-console.log',
+};
+
+/** @brief URIs the client has subscribed to via resources/subscribe. */
+const subscribedResources = new Set<string>();
+
+/** @brief Handle for the IPC directory watcher, started lazily on first subscribe. */
+let ipcWatcher: fs.FSWatcher | null = null;
+
+/** @brief Pending debounce timers for resource-updated notifications, keyed by URI. */
+const resourceNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * @brief Watch the IPC directory and forward file changes as
+ * `notifications/resources/updated` for subscribed resources.
+ *
+ * Notifications are debounced per URI (250 ms) because the console log in
+ * particular can be appended to many times per second.
+ */
+function ensureIpcWatcher(): void {
+  if (ipcWatcher) { return; }
+  let dir: string;
+  try {
+    dir = getIpcDir();
+    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+    ipcWatcher = fs.watch(dir, (_event, fileName) => {
+      if (!fileName) { return; }
+      for (const [uri, backingFile] of Object.entries(SUBSCRIBABLE_RESOURCES)) {
+        if (backingFile !== fileName || !subscribedResources.has(uri)) { continue; }
+        if (resourceNotifyTimers.has(uri)) { continue; }
+        resourceNotifyTimers.set(uri, setTimeout(() => {
+          resourceNotifyTimers.delete(uri);
+          if (!subscribedResources.has(uri) || !server.isConnected()) { return; }
+          void server.server.sendResourceUpdated({ uri }).catch(() => { /* ignore */ });
+        }, 250));
+      }
+    });
+    ipcWatcher.on('error', (err) => {
+      debug(`ipcWatcher error: ${err instanceof Error ? err.message : String(err)}`);
+      ipcWatcher = null;
+    });
+    debug(`ipcWatcher: watching ${dir}`);
+  } catch (err) {
+    debug(`ensureIpcWatcher failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+server.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+  const uri = request.params.uri;
+  if (!(uri in SUBSCRIBABLE_RESOURCES)) {
+    throw new Error(`Resource does not support subscriptions: ${uri}`);
+  }
+  subscribedResources.add(uri);
+  ensureIpcWatcher();
+  debug(`resources/subscribe: ${uri}`);
+  return {};
+});
+
+server.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
+  subscribedResources.delete(request.params.uri);
+  debug(`resources/unsubscribe: ${request.params.uri}`);
+  return {};
+});
+
+// ============================================================================
+// Prompts
+// ============================================================================
+//
+// Reusable prompt templates exposed by MCP clients as slash commands
+// (VS Code: /mcp.openblink.<prompt-name>).
+
+server.registerPrompt('deploy-and-debug', {
+  title: 'Deploy & Debug',
+  description: 'Compile the current mruby program, transfer it to the connected OpenBlink device, and verify it runs correctly.',
+  argsSchema: {
+    file: z.string().optional().describe(
+      'Workspace-relative path to the .rb source file. If omitted, the configured openblink.sourceFile is used.'
+    ),
+  },
+}, ({ file }) => ({
+  messages: [{
+    role: 'user' as const,
+    content: {
+      type: 'text' as const,
+      text: [
+        `Deploy ${file ? `the mruby program "${file}"` : 'the configured mruby program'} to the connected OpenBlink device and verify it works:`,
+        '',
+        '1. Check the device connection with get_device_info. If no device is connected, run scan_devices and connect_device first.',
+        `2. Validate the source with validate_ruby_code${file ? ` (file: "${file}")` : ''} and fix any syntax errors before deploying.`,
+        `3. Run build_and_blink${file ? ` with file "${file}"` : ''} to compile and transfer the program.`,
+        '4. If the build fails, inspect get_build_diagnostics, fix the reported errors, and retry.',
+        '5. After a successful transfer, use get_console_output to confirm the program produces the expected runtime output and report the results.',
+      ].join('\n'),
+    },
+  }],
+}));
+
+server.registerPrompt('fix-build-errors', {
+  title: 'Fix Build Errors',
+  description: 'Diagnose the most recent failed OpenBlink build and fix the errors in the source file.',
+  argsSchema: {},
+}, () => ({
+  messages: [{
+    role: 'user' as const,
+    content: {
+      type: 'text' as const,
+      text: [
+        'The last OpenBlink build failed. Diagnose and fix it:',
+        '',
+        '1. Call get_build_diagnostics to retrieve the error details (file, line, column, message, suggestions).',
+        '2. Read get_board_reference to confirm which APIs the selected board actually provides — do not invent methods.',
+        '3. Fix the reported issues in the source file, keeping changes minimal.',
+        '4. Verify the fix with validate_ruby_code, then redeploy with build_and_blink.',
+        '5. Confirm the program runs correctly using get_console_output.',
+      ].join('\n'),
+    },
+  }],
+}));
+
+server.registerPrompt('write-board-program', {
+  title: 'Write Board Program',
+  description: 'Write a new mruby program for the currently selected OpenBlink board using only its documented APIs.',
+  argsSchema: {
+    task: z.string().describe('What the program should do (e.g. "blink the LED red and blue alternately every 500 ms").'),
+  },
+}, ({ task }) => ({
+  messages: [{
+    role: 'user' as const,
+    content: {
+      type: 'text' as const,
+      text: [
+        `Write an mruby program for the currently selected OpenBlink board that does the following: ${task}`,
+        '',
+        'Requirements:',
+        '1. First call get_board_reference and use ONLY the classes and methods documented there — do not invent APIs.',
+        '2. Structure the program as an infinite loop where appropriate and keep it small (it runs on a microcontroller with limited RAM).',
+        '3. Validate the code with validate_ruby_code before deploying.',
+        '4. Deploy with build_and_blink and verify the behavior via get_console_output.',
+      ].join('\n'),
+    },
+  }],
+}));
 
 // ============================================================================
 // Start Server

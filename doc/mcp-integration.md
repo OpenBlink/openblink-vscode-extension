@@ -299,6 +299,49 @@ affordance and a click-to-open action on linked resources).
   users can open the full document in a dedicated editor
   (`mimeType: text/markdown`).
 
+### Resources (VS Code 1.102+)
+
+The server exposes read-only MCP resources mirroring the tool data. They
+can be browsed with **MCP: Browse Resources** and attached as chat
+context via **Add Context... > MCP Resources**:
+
+| URI | Content | Subscribable |
+|-----|---------|--------------|
+| `openblink://device/status` | Live connection state, board, metrics (JSON) | yes |
+| `openblink://build/status` | Build system status (JSON) | yes |
+| `openblink://build/diagnostics` | Last build diagnostics (JSON) | yes |
+| `openblink://console/recent` | Recent device console output (text) | yes |
+| `openblink://board/reference` | Selected board API reference (Markdown) | no |
+
+Subscribable resources emit `notifications/resources/updated` (debounced
+to 250 ms) when the backing IPC file changes, so clients can keep an
+attached resource fresh without polling.
+
+### Prompts (VS Code 1.102+)
+
+Reusable prompt templates are exposed as slash commands in VS Code chat
+(`/mcp.openblink.<name>`):
+
+- `deploy-and-debug` — guided compile → transfer → verify workflow
+  (optional `file` argument).
+- `fix-build-errors` — diagnose and fix the most recent failed build.
+- `write-board-program` — write a new mruby program for the selected
+  board using only documented APIs (`task` argument).
+
+### Elicitation (VS Code 1.101+)
+
+When `connect_device` is called **without** a `deviceId` and the MCP
+client supports elicitation, the server scans for nearby devices and
+asks the user to pick one via an input dialog. Clients without
+elicitation support receive a structured error instructing the agent to
+run `scan_devices` and pass the `deviceId` explicitly.
+
+### Logging
+
+When `OPENBLINK_MCP_DEBUG` is enabled, debug lines are also forwarded
+as MCP `notifications/message` logging notifications, so they appear in
+the client's MCP output channel in addition to stderr.
+
 ### Icons (planned)
 
 Per-tool icons (MCP [SEP-973](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/955))

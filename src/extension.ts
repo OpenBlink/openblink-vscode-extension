@@ -317,8 +317,22 @@ export function activate(context: vscode.ExtensionContext) {
   if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
     const mcpServerModule = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
 
+    // Notify VS Code to re-query server definitions when the MCP integration
+    // is toggled via `openblink.mcp.enabled`, so the server is started or
+    // stopped without reloading the window.
+    const mcpDefinitionsChanged = new vscode.EventEmitter<void>();
+    context.subscriptions.push(mcpDefinitionsChanged);
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('openblink.mcp.enabled')) {
+          mcpDefinitionsChanged.fire();
+        }
+      }),
+    );
+
     context.subscriptions.push(
       vscode.lm.registerMcpServerDefinitionProvider('openblink.mcpServer', {
+        onDidChangeMcpServerDefinitions: mcpDefinitionsChanged.event,
         provideMcpServerDefinitions: async () => {
           if (!mcpBridge.isEnabled()) { return []; }
           const ipcDir = mcpBridge.resolveIpcDir(context);
