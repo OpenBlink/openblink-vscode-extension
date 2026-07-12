@@ -6,6 +6,7 @@
 import { EventEmitter } from 'vscode';
 import * as l10n from '@vscode/l10n';
 import type { Peripheral } from '@abandonware/noble';
+import { errorMessage } from './error-utils';
 import {
   ConnectionState,
   DeviceInfo,
@@ -326,7 +327,7 @@ export class BleManager {
 
       await this.connectToDevice(info.peripheral);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       this.log(`[BLE] Error: ${msg}`);
       // Clean up BLE connection to prevent resource leaks when post-connect setup fails
       if (this.currentDevice) {
@@ -501,7 +502,7 @@ export class BleManager {
     try {
       await this.negotiatedMtuCharacteristic.readAsync();
     } catch (error) {
-      this.log(`[BLE] Heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.log(`[BLE] Heartbeat failed: ${errorMessage(error)}`);
     }
   }
 

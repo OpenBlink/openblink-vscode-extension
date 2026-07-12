@@ -49,6 +49,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { pathToFileURL } from 'url';
+import { errorMessage } from './error-utils';
 
 // ============================================================================
 // Debug Logging
@@ -210,7 +211,7 @@ function readJsonFile<T>(filePath: string): T | null {
     if (raw.length === 0) { return null; }
     return JSON.parse(raw);
   } catch (err) {
-    debug(`readJsonFile(${path.basename(filePath)}) error: ${err instanceof Error ? err.message : String(err)}`);
+    debug(`readJsonFile(${path.basename(filePath)}) error: ${errorMessage(err)}`);
     return null;
   }
 }
@@ -221,7 +222,7 @@ function readTextFile(filePath: string): string | null {
     if (!fs.existsSync(filePath)) { return null; }
     return fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    debug(`readTextFile(${path.basename(filePath)}) error: ${err instanceof Error ? err.message : String(err)}`);
+    debug(`readTextFile(${path.basename(filePath)}) error: ${errorMessage(err)}`);
     return null;
   }
 }
@@ -245,7 +246,7 @@ function writeJsonFile<T>(filePath: string, data: T): boolean {
     return true;
   } catch (err) {
     try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
-    debug(`writeJsonFile(${path.basename(filePath)}) error: ${err instanceof Error ? err.message : String(err)}`);
+    debug(`writeJsonFile(${path.basename(filePath)}) error: ${errorMessage(err)}`);
     return false;
   }
 }
@@ -427,7 +428,7 @@ server.registerTool('build_and_blink', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(
         createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg)
       );
@@ -839,7 +840,7 @@ server.registerTool('validate_ruby_code', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -932,7 +933,7 @@ server.registerTool('scan_devices', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1027,7 +1028,7 @@ server.registerTool('connect_device', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1114,7 +1115,7 @@ server.registerTool('disconnect_device', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1182,7 +1183,7 @@ server.registerTool('soft_reset', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1264,7 +1265,7 @@ server.registerTool('get_build_diagnostics', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1386,7 +1387,7 @@ server.registerTool('get_build_status', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1475,7 +1476,7 @@ server.registerTool('cancel_build', {
     try {
       dir = getIpcDir();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       return formatErrorResponse(createError(ErrorCode.NOT_INITIALIZED, 'Extension not initialized', msg));
     }
 
@@ -1548,7 +1549,7 @@ async function main(): Promise<void> {
       debug(`IPC directory does not exist yet (will be created by extension): ${dir}`);
     }
   } catch (err) {
-    process.stderr.write(`OpenBlink MCP server: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`OpenBlink MCP server: ${errorMessage(err)}\n`);
     process.stderr.write('OpenBlink MCP server: set OPENBLINK_IPC_DIR to an absolute path pointing at the extension\'s IPC directory.\n');
     process.exit(1);
   }
