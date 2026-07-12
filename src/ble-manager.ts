@@ -437,6 +437,12 @@ export class BleManager {
     if (this.phase === 'connecting' || !this.transition('connecting')) {
       return;
     }
+    // Cancel any pending auto-reconnect so it cannot race with this
+    // user-initiated connection attempt.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.userInitiatedDisconnect = false;
     this.reconnectAttempts = 0;
 
