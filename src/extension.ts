@@ -5,18 +5,18 @@
 
 import * as vscode from 'vscode';
 import * as l10n from '@vscode/l10n';
-import * as path from 'path';
 import { BleManager } from './ble-manager';
 import { errorMessage } from './error-utils';
-import { initCompiler, compile, parseDiagnostics } from './compiler';
-import { sendFirmware, sendReset } from './protocol';
+import { initCompiler } from './compiler';
 import * as boardManager from './board-manager';
 import * as ui from './ui-manager';
 import * as mcpBridge from './mcp-bridge';
-import { BLE_CONSTANTS, MetricsData, SavedDevice } from './types';
-
-/** @brief globalState key for persisted saved-device list. */
-const SAVED_DEVICES_KEY = 'openblink.savedDevices';
+import { SavedDevice } from './types';
+import { ExtensionState, SAVED_DEVICES_KEY } from './extension-state';
+import { buildAndBlink } from './build-pipeline';
+import { handleMcpBuildTrigger, handleMcpCommand } from './mcp-command-handlers';
+import { installMcpToWorkspace, showMcpConfigSnippet } from './mcp-config-installer';
+import { registerCommands } from './commands';
 
 /**
  * @brief Control characters stripped from device console output (all except
@@ -24,29 +24,6 @@ const SAVED_DEVICES_KEY = 'openblink.savedDevices';
  * from malicious BLE devices.
  */
 const CONSOLE_CONTROL_CHARS = /[\x00-\x08\x0B-\x1F\x7F]/g;
-
-/** @brief Singleton BLE manager instance. */
-let bleManager: BleManager;
-/** @brief Sidebar tree-view provider for BLE device scanning and selection. */
-let devicesProvider: ui.DevicesTreeProvider;
-/** @brief Sidebar tree-view provider for user actions. */
-let tasksProvider: ui.TasksTreeProvider;
-/** @brief Sidebar tree-view provider for connected device information. */
-let deviceInfoProvider: ui.DeviceInfoTreeProvider;
-/** @brief Sidebar tree-view provider for build/transfer metrics. */
-let metricsProvider: ui.MetricsTreeProvider;
-/** @brief Sidebar tree-view provider for selected board's API reference. */
-let boardReferenceProvider: ui.BoardReferenceTreeProvider;
-/** @brief Sidebar tree-view provider for MCP integration status. */
-let mcpStatusProvider: ui.McpStatusTreeProvider;
-/** @brief Workspace-relative path of the Ruby source file to compile. */
-let currentSourceFile: string;
-/** @brief Active program slot on the target device (1 or 2). */
-let currentSlot: number;
-/** @brief Guard flag to prevent overlapping build-and-blink operations. */
-let isBuilding = false;
-/** @brief URIs of files being saved manually (not by auto-save). */
-const pendingManualSave = new Set<string>();
 
 /**
  * @brief Extension activation entry point.
@@ -74,6 +51,7 @@ const pendingManualSave = new Set<string>();
  * @param context  Extension context provided by VS Code.
  */
 export function activate(context: vscode.ExtensionContext) {
+  const state = new ExtensionState();
   // Initialize UI
   const outputChannel = ui.createOutputChannel();
   const diagnosticCollection = ui.createDiagnosticCollection();
@@ -84,63 +62,63 @@ export function activate(context: vscode.ExtensionContext) {
   ui.log(`[SYSTEM] OpenBlink VSCode Extension v${extensionVersion} started.`);
 
   // Initialize settings
-  currentSourceFile = vscode.workspace.getConfiguration('openblink').get<string>('sourceFile') ?? 'app.rb';
-  currentSlot = vscode.workspace.getConfiguration('openblink').get<number>('slot') ?? 2;
+  state.currentSourceFile = vscode.workspace.getConfiguration('openblink').get<string>('sourceFile') ?? 'app.rb';
+  state.currentSlot = vscode.workspace.getConfiguration('openblink').get<number>('slot') ?? 2;
 
   // Initialize TreeView providers (must be created before event listeners reference them)
-  devicesProvider = new ui.DevicesTreeProvider();
-  tasksProvider = new ui.TasksTreeProvider();
-  deviceInfoProvider = new ui.DeviceInfoTreeProvider();
-  metricsProvider = new ui.MetricsTreeProvider();
-  boardReferenceProvider = new ui.BoardReferenceTreeProvider();
-  mcpStatusProvider = new ui.McpStatusTreeProvider();
+  state.devicesProvider = new ui.DevicesTreeProvider();
+  state.tasksProvider = new ui.TasksTreeProvider();
+  state.deviceInfoProvider = new ui.DeviceInfoTreeProvider();
+  state.metricsProvider = new ui.MetricsTreeProvider();
+  state.boardReferenceProvider = new ui.BoardReferenceTreeProvider();
+  state.mcpStatusProvider = new ui.McpStatusTreeProvider();
 
   // Initialize BLE manager
-  bleManager = new BleManager();
+  state.bleManager = new BleManager();
   context.subscriptions.push({
-    dispose: () => bleManager.dispose()
+    dispose: () => state.bleManager.dispose()
   });
 
-  bleManager.onConnectionStateChanged((state) => {
-    const reconnect = state === 'reconnecting' ? bleManager.reconnectInfo : undefined;
-    ui.updateStatusBar(state, bleManager.deviceName, undefined, currentSlot, reconnect);
-    tasksProvider.update({ connected: bleManager.isConnected });
-    deviceInfoProvider.update({
-      connected: bleManager.isConnected,
-      deviceName: bleManager.deviceName,
-      deviceId: bleManager.deviceId,
-      mtu: bleManager.negotiatedMTU,
+  state.bleManager.onConnectionStateChanged((connectionState) => {
+    const reconnect = connectionState === 'reconnecting' ? state.bleManager.reconnectInfo : undefined;
+    ui.updateStatusBar(connectionState, state.bleManager.deviceName, undefined, state.currentSlot, reconnect);
+    state.tasksProvider.update({ connected: state.bleManager.isConnected });
+    state.deviceInfoProvider.update({
+      connected: state.bleManager.isConnected,
+      deviceName: state.bleManager.deviceName,
+      deviceId: state.bleManager.deviceId,
+      mtu: state.bleManager.negotiatedMTU,
     });
-    devicesProvider.updateConnection(state, bleManager.deviceId);
+    state.devicesProvider.updateConnection(connectionState, state.bleManager.deviceId);
 
     // Update MCP bridge with connection state
     mcpBridge.updateConnectionStatus(
-      state,
-      bleManager.deviceName,
-      bleManager.deviceId,
-      bleManager.negotiatedMTU,
+      connectionState,
+      state.bleManager.deviceName,
+      state.bleManager.deviceId,
+      state.bleManager.negotiatedMTU,
     );
 
     // Auto-save device on successful connection
-    if (state === 'connected' && bleManager.deviceId) {
+    if (connectionState === 'connected' && state.bleManager.deviceId) {
       const saved = context.globalState.get<SavedDevice[]>(SAVED_DEVICES_KEY, []);
-      if (!saved.some(d => d.id === bleManager.deviceId)) {
-        const updated = [...saved, { name: bleManager.deviceName, id: bleManager.deviceId }];
+      if (!saved.some(d => d.id === state.bleManager.deviceId)) {
+        const updated = [...saved, { name: state.bleManager.deviceName, id: state.bleManager.deviceId }];
         void context.globalState.update(SAVED_DEVICES_KEY, updated);
-        devicesProvider.setSavedDevices(updated);
+        state.devicesProvider.setSavedDevices(updated);
       }
     }
   });
 
-  bleManager.onScanningStateChanged((isScanning) => {
-    devicesProvider.updateScanning(isScanning);
+  state.bleManager.onScanningStateChanged((isScanning) => {
+    state.devicesProvider.updateScanning(isScanning);
   });
 
-  bleManager.onDeviceDiscovered((info) => {
-    devicesProvider.addDiscoveredDevice(info);
+  state.bleManager.onDeviceDiscovered((info) => {
+    state.devicesProvider.addDiscoveredDevice(info);
   });
 
-  bleManager.onConsoleOutput((message) => {
+  state.bleManager.onConsoleOutput((message) => {
     const lines = message.includes('\n') ? message.split('\n') : [message];
     for (const line of lines) {
       const sanitized = line.replace(CONSOLE_CONTROL_CHARS, '');
@@ -153,39 +131,39 @@ export function activate(context: vscode.ExtensionContext) {
     mcpBridge.scheduleConsoleWrite();
   });
 
-  bleManager.onLog((message) => {
+  state.bleManager.onLog((message) => {
     ui.log(message);
   });
 
   // Restore saved devices from globalState
   const savedDevices = context.globalState.get<SavedDevice[]>(SAVED_DEVICES_KEY, []);
-  devicesProvider.setSavedDevices(savedDevices);
+  state.devicesProvider.setSavedDevices(savedDevices);
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('openblink-devices', devicesProvider),
-    vscode.window.registerTreeDataProvider('openblink-tasks', tasksProvider),
-    vscode.window.registerTreeDataProvider('openblink-device-info', deviceInfoProvider),
-    vscode.window.registerTreeDataProvider('openblink-metrics', metricsProvider),
-    vscode.window.registerTreeDataProvider('openblink-board-reference', boardReferenceProvider),
-    vscode.window.registerTreeDataProvider('openblink-mcp-status', mcpStatusProvider),
-    { dispose: () => devicesProvider.dispose() },
-    { dispose: () => tasksProvider.dispose() },
-    { dispose: () => deviceInfoProvider.dispose() },
-    { dispose: () => metricsProvider.dispose() },
-    { dispose: () => boardReferenceProvider.dispose() },
-    { dispose: () => mcpStatusProvider.dispose() }
+    vscode.window.registerTreeDataProvider('openblink-devices', state.devicesProvider),
+    vscode.window.registerTreeDataProvider('openblink-tasks', state.tasksProvider),
+    vscode.window.registerTreeDataProvider('openblink-device-info', state.deviceInfoProvider),
+    vscode.window.registerTreeDataProvider('openblink-metrics', state.metricsProvider),
+    vscode.window.registerTreeDataProvider('openblink-board-reference', state.boardReferenceProvider),
+    vscode.window.registerTreeDataProvider('openblink-mcp-status', state.mcpStatusProvider),
+    { dispose: () => state.devicesProvider.dispose() },
+    { dispose: () => state.tasksProvider.dispose() },
+    { dispose: () => state.deviceInfoProvider.dispose() },
+    { dispose: () => state.metricsProvider.dispose() },
+    { dispose: () => state.boardReferenceProvider.dispose() },
+    { dispose: () => state.mcpStatusProvider.dispose() }
   );
 
   // Load boards
   const _boards = boardManager.loadBoards(context.extensionUri);
   const currentBoard = boardManager.getCurrentBoard();
-  tasksProvider.update({
-    sourceFile: currentSourceFile,
+  state.tasksProvider.update({
+    sourceFile: state.currentSourceFile,
     boardName: currentBoard?.displayName ?? '',
-    slot: currentSlot,
+    slot: state.currentSlot,
   });
   if (currentBoard) {
-    boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(currentBoard));
+    state.boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(currentBoard));
   }
 
   // ========================================================================
@@ -196,117 +174,19 @@ export function activate(context: vscode.ExtensionContext) {
   // writes a `trigger.json` file.
   // NOTE: Must be registered BEFORE initialize() so that any existing
   // trigger.json at startup is not consumed without being processed.
-  mcpBridge.onBuildTrigger(async (filePath: string, requestId: string) => {
-    const startTime = Date.now();
-    const summary = path.basename(filePath);
-    ui.log(`[MCP] build_and_blink received: ${summary} (${requestId})`);
-    mcpStatusProvider.addHistoryEntry({ tool: 'build_and_blink', requestId, summary });
-    mcpStatusProvider.update({ lastTriggerTime: new Date(), lastTriggerRequestId: requestId });
-
-    // Mark build as started
-    mcpBridge.markBuildStarted(requestId, filePath);
-
-    try {
-      const sourceUri = vscode.Uri.file(filePath);
-      const buildResult = await buildAndBlink(context, sourceUri, { silent: true, requestId });
-      const durationMs = Date.now() - startTime;
-
-      // Write build result for MCP server to consume
-      const history = ui.getMetricsHistory();
-      const lastCompile = history.compile.length > 0 ? history.compile[history.compile.length - 1] : undefined;
-      const lastTransfer = history.transfer.length > 0 ? history.transfer[history.transfer.length - 1] : undefined;
-      const lastSize = history.size.length > 0 ? history.size[history.size.length - 1] : undefined;
-
-      const compiledWithoutTransfer = !buildResult.success && buildResult.error?.includes('not connected') && lastCompile !== undefined;
-      mcpBridge.writeBuildResult({
-        requestId,
-        success: buildResult.success,
-        compileTime: compiledWithoutTransfer ? lastCompile : (buildResult.success ? lastCompile : undefined),
-        transferTime: buildResult.success ? lastTransfer : undefined,
-        programSize: compiledWithoutTransfer ? lastSize : (buildResult.success ? lastSize : undefined),
-        error: buildResult.error,
-        compiledWithoutTransfer: compiledWithoutTransfer || undefined,
-      });
-      mcpStatusProvider.update({
-        lastResultTime: new Date(),
-        lastResultSuccess: buildResult.success,
-        lastResultError: buildResult.error,
-      });
-
-      // Record outcome in the history view and log
-      const detail = buildResult.success
-        ? [
-            lastCompile !== undefined ? `compile ${lastCompile.toFixed(1)}ms` : undefined,
-            lastTransfer !== undefined ? `transfer ${lastTransfer.toFixed(1)}ms` : undefined,
-            lastSize !== undefined ? `size ${lastSize}B` : undefined,
-          ].filter(Boolean).join(', ')
-        : buildResult.error;
-      mcpStatusProvider.updateHistoryEntry(requestId, {
-        status: buildResult.success ? 'success' : 'failed',
-        detail: detail || undefined,
-        durationMs,
-      });
-      ui.log(`[MCP] build_and_blink ${buildResult.success ? 'completed' : 'failed'} in ${durationMs}ms${detail ? ` (${detail})` : ''}`);
-
-      // Mark build as completed
-      mcpBridge.markBuildCompleted(requestId, buildResult.success);
-    } catch (error) {
-      const msg = errorMessage(error);
-      const durationMs = Date.now() - startTime;
-      mcpBridge.writeBuildResult({ requestId, success: false, error: msg });
-      mcpStatusProvider.update({ lastResultTime: new Date(), lastResultSuccess: false, lastResultError: msg });
-      mcpBridge.markBuildCompleted(requestId, false);
-      mcpStatusProvider.updateHistoryEntry(requestId, { status: 'failed', detail: msg, durationMs });
-      ui.log(`[MCP] build_and_blink threw in ${durationMs}ms: ${msg}`);
-    }
-  });
-
-  // Register MCP command callback — invoked when the MCP server writes a `command.json` file.
-  mcpBridge.onCommand(async (command) => {
-    const summary = summarizeMcpCommand(command);
-    ui.log(`[MCP] ${command.type} received${summary ? ` (${summary})` : ''} (${command.requestId})`);
-    mcpStatusProvider.addHistoryEntry({ tool: command.type, requestId: command.requestId, summary });
-
-    switch (command.type) {
-      case 'scan':
-        await handleMcpScanCommand(command);
-        break;
-      case 'connect':
-        await handleMcpConnectCommand(command);
-        break;
-      case 'disconnect':
-        await handleMcpDisconnectCommand(command);
-        break;
-      case 'reset':
-        await handleMcpResetCommand(command);
-        break;
-      case 'cancel':
-        await handleMcpCancelCommand(command);
-        break;
-      case 'validate':
-        await handleMcpValidateCommand(command);
-        break;
-      default: {
-        const unknownType = (command as { type: string }).type;
-        ui.log(`[MCP] Unknown command type: ${unknownType}`);
-        mcpStatusProvider.updateHistoryEntry(command.requestId, {
-          status: 'failed',
-          detail: `Unknown command type: ${unknownType}`,
-        });
-      }
-    }
-  });
+  mcpBridge.onBuildTrigger((filePath, requestId) => handleMcpBuildTrigger(state, filePath, requestId));
+  mcpBridge.onCommand((command) => handleMcpCommand(state, command));
 
   mcpBridge.initialize(context);
 
   // Set initial MCP enabled state immediately after initialize() reads the
   // setting, before any debounced writes can fire.
-  mcpStatusProvider.update({ mcpEnabled: mcpBridge.isEnabled() });
+  state.mcpStatusProvider.update({ mcpEnabled: mcpBridge.isEnabled() });
 
   // Set up MCP write callbacks to update the MCP status tree view
   mcpBridge.setWriteCallbacks({
-    onStatusWritten: () => mcpStatusProvider.update({ lastStatusWriteTime: new Date() }),
-    onConsoleWritten: () => mcpStatusProvider.update({ lastConsoleWriteTime: new Date() }),
+    onStatusWritten: () => state.mcpStatusProvider.update({ lastStatusWriteTime: new Date() }),
+    onConsoleWritten: () => state.mcpStatusProvider.update({ lastConsoleWriteTime: new Date() }),
   });
 
   // Set initial board status for MCP
@@ -362,7 +242,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Clear the MCP command history (triggered by the view title-bar button).
   context.subscriptions.push(
     vscode.commands.registerCommand('openblink.clearMcpHistory', () => {
-      mcpStatusProvider.clearHistory();
+      state.mcpStatusProvider.clearHistory();
       ui.log('[MCP] History cleared');
     }),
   );
@@ -409,6 +289,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  registerCommands(context, state);
+
   // Initialize compiler
   initCompiler(context.extensionUri).then(() => {
     ui.log('[SYSTEM] mrbc WASM compiler initialized.');
@@ -425,25 +307,25 @@ export function activate(context: vscode.ExtensionContext) {
   //
   // onWillSaveTextDocument fires *before* the save and exposes the
   // save reason (Manual vs AfterDelay/FocusOut).  We record manual
-  // saves in pendingManualSave and check it in onDidSaveTextDocument.
+  // saves in state.pendingManualSave and check it in onDidSaveTextDocument.
   context.subscriptions.push(
     vscode.workspace.onWillSaveTextDocument((e) => {
       if (e.reason === vscode.TextDocumentSaveReason.Manual) {
         const key = e.document.uri.toString();
-        pendingManualSave.add(key);
+        state.pendingManualSave.add(key);
         // Safety: remove stale entry if onDidSaveTextDocument never fires
         // (e.g. save fails due to a disk error).
-        setTimeout(() => { pendingManualSave.delete(key); }, 5000);
+        setTimeout(() => { state.pendingManualSave.delete(key); }, 5000);
       }
     }),
     vscode.workspace.onDidSaveTextDocument(async (document) => {
       const key = document.uri.toString();
-      if (!pendingManualSave.delete(key)) { return; }
+      if (!state.pendingManualSave.delete(key)) { return; }
       if (!document.fileName.endsWith('.rb')) { return; }
       const activeDoc = vscode.window.activeTextEditor?.document;
       if (!activeDoc || activeDoc.uri.toString() !== key) { return; }
       try {
-        await buildAndBlink(context, document.uri, { silent: true });
+        await buildAndBlink(state, document.uri, { silent: true });
       } catch (error) {
         const msg = errorMessage(error);
         ui.log(`[SYSTEM] Build error: ${msg}`);
@@ -456,16 +338,16 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('openblink.sourceFile')) {
-        currentSourceFile = vscode.workspace.getConfiguration('openblink').get<string>('sourceFile') ?? 'app.rb';
-        tasksProvider.update({ sourceFile: currentSourceFile });
-        mcpBridge.updateStatus({ sourceFile: currentSourceFile });
+        state.currentSourceFile = vscode.workspace.getConfiguration('openblink').get<string>('sourceFile') ?? 'app.rb';
+        state.tasksProvider.update({ sourceFile: state.currentSourceFile });
+        mcpBridge.updateStatus({ sourceFile: state.currentSourceFile });
       }
       if (e.affectsConfiguration('openblink.slot')) {
         const raw = vscode.workspace.getConfiguration('openblink').get<number>('slot');
-        currentSlot = (raw === 1 || raw === 2) ? raw : 2;
-        tasksProvider.update({ slot: currentSlot });
-        ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, undefined, currentSlot);
-        mcpBridge.updateStatus({ slot: currentSlot });
+        state.currentSlot = (raw === 1 || raw === 2) ? raw : 2;
+        state.tasksProvider.update({ slot: state.currentSlot });
+        ui.updateStatusBar(state.bleManager.connectionState, state.bleManager.deviceName, undefined, state.currentSlot);
+        mcpBridge.updateStatus({ slot: state.currentSlot });
       }
       if (e.affectsConfiguration('openblink.board')) {
         const boards = boardManager.getBoards();
@@ -473,8 +355,8 @@ export function activate(context: vscode.ExtensionContext) {
         const found = boards.find(b => b.name === boardName);
         if (found) {
           boardManager.setCurrentBoard(found);
-          tasksProvider.update({ boardName: found.displayName });
-          boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(found));
+          state.tasksProvider.update({ boardName: found.displayName });
+          state.boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(found));
           mcpBridge.updateBoardStatus({
             name: found.name,
             displayName: found.displayName,
@@ -486,397 +368,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('openblink.mcp.enabled')) {
         const newEnabled = vscode.workspace.getConfiguration('openblink').get<boolean>('mcp.enabled', true);
         mcpBridge.setEnabled(newEnabled);
-        mcpStatusProvider.update({ mcpEnabled: newEnabled });
+        state.mcpStatusProvider.update({ mcpEnabled: newEnabled });
         ui.log(`[MCP] Integration ${newEnabled ? 'enabled' : 'disabled'}.`);
       }
     }),
   );
 
-  // ========================================================================
-  // Commands
-  // ========================================================================
-
-  context.subscriptions.push(
-    // Legacy command kept for backward-compatibility; now starts a scan
-    // instead of showing a QuickPick.
-    vscode.commands.registerCommand('openblink.connectDevice', async () => {
-      ui.showOutputChannelOnce();
-      try {
-        await bleManager.startScan();
-      } catch (error) {
-        const msg = errorMessage(error);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
-    // Start scanning for OpenBlink devices (Devices view title-bar button).
-    vscode.commands.registerCommand('openblink.scanDevices', async () => {
-      ui.showOutputChannelOnce();
-      try {
-        await bleManager.startScan();
-      } catch (error) {
-        const msg = errorMessage(error);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
-    // Stop an active BLE scan (Devices view title-bar button).
-    vscode.commands.registerCommand('openblink.stopScan', async () => {
-      await bleManager.stopScan();
-    }),
-
-    // Connect to a device that was found during the current scan.
-    vscode.commands.registerCommand('openblink.connectScannedDevice', async (deviceId: unknown) => {
-      if (typeof deviceId !== 'string' || deviceId.length === 0) {
-        vscode.window.showErrorMessage(l10n.t('Invalid device ID'));
-        return;
-      }
-      try {
-        devicesProvider.updateConnection('connecting', deviceId);
-        await bleManager.connectById(deviceId);
-      } catch (error) {
-        const msg = errorMessage(error);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
-    // Connect to a previously saved device.  If the device is not in the
-    // current discovered list, a scan is triggered first and we wait for
-    // the device to appear (or the scan to complete).
-    vscode.commands.registerCommand('openblink.connectSavedDevice', async (deviceId: unknown) => {
-      if (typeof deviceId !== 'string' || deviceId.length === 0) {
-        vscode.window.showErrorMessage(l10n.t('Invalid device ID'));
-        return;
-      }
-      if (!bleManager.discoveredDevices.has(deviceId)) {
-        try {
-          ui.log(`[BLE] ${l10n.t('Scanning to find saved device...')}`);
-          await bleManager.startScan();
-          // Wait for the device to appear or the scan to end, with an explicit
-          // timeout as an upper bound in case scanning never completes.
-          await bleManager.waitForScanCompletion({
-            deviceId,
-            timeoutMs: BLE_CONSTANTS.SCAN_TIMEOUT + BLE_CONSTANTS.SCAN_GRACE_PERIOD,
-          });
-        } catch (error) {
-          const msg = errorMessage(error);
-          vscode.window.showErrorMessage(msg);
-          return;
-        }
-      }
-      try {
-        devicesProvider.updateConnection('connecting', deviceId);
-        await bleManager.connectById(deviceId);
-      } catch (error) {
-        const msg = errorMessage(error);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
-    // Remove a saved device from globalState (context-menu trash icon).
-    vscode.commands.registerCommand('openblink.forgetDevice', async (item: { deviceId?: string }) => {
-      const deviceId = item?.deviceId;
-      if (!deviceId) { return; }
-      const saved = context.globalState.get<SavedDevice[]>(SAVED_DEVICES_KEY, []);
-      const updated = saved.filter(d => d.id !== deviceId);
-      await context.globalState.update(SAVED_DEVICES_KEY, updated);
-      devicesProvider.setSavedDevices(updated);
-    }),
-
-    vscode.commands.registerCommand('openblink.disconnectDevice', async () => {
-      await bleManager.disconnect();
-    }),
-
-    vscode.commands.registerCommand('openblink.buildAndBlink', async () => {
-      try {
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document.fileName.endsWith('.rb')) {
-          await buildAndBlink(context, editor.document.uri);
-        } else {
-          // Fallback to configured source file
-          const workspaceFolders = vscode.workspace.workspaceFolders;
-          if (workspaceFolders) {
-            await buildAndBlink(context, vscode.Uri.joinPath(workspaceFolders[0].uri, currentSourceFile));
-          }
-        }
-      } catch (error) {
-        const msg = errorMessage(error);
-        ui.log(`[SYSTEM] Build error: ${msg}`);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
-    vscode.commands.registerCommand('openblink.softReset', async () => {
-      const programChar = bleManager.getProgramCharacteristic();
-      if (!bleManager.isConnected || !programChar) {
-        vscode.window.showErrorMessage(l10n.t('Device is not connected'));
-        return;
-      }
-      try {
-        await sendReset(programChar, (msg) => ui.log(msg));
-        vscode.window.showInformationMessage(l10n.t('Soft reset executed'));
-      } catch (error) {
-        const msg = errorMessage(error);
-        vscode.window.showErrorMessage(msg);
-      }
-    }),
-
-    vscode.commands.registerCommand('openblink.selectSourceFile', async (fileUri?: vscode.Uri) => {
-      if (fileUri?.fsPath) {
-        currentSourceFile = vscode.workspace.asRelativePath(fileUri, false);
-      } else {
-        const rubyFiles = await vscode.workspace.findFiles('**/*.rb');
-        if (rubyFiles.length === 0) {
-          vscode.window.showErrorMessage(l10n.t('No Ruby files found in the workspace'));
-          return;
-        }
-        const items = rubyFiles.map(f => ({
-          label: vscode.workspace.asRelativePath(f, false),
-          uri: f,
-        }));
-        const selected = await vscode.window.showQuickPick(items, {
-          placeHolder: l10n.t('Select a Ruby file to compile'),
-        });
-        if (!selected) { return; }
-        currentSourceFile = selected.label;
-      }
-
-      await vscode.workspace.getConfiguration('openblink').update('sourceFile', currentSourceFile, vscode.ConfigurationTarget.Workspace);
-      tasksProvider.update({ sourceFile: currentSourceFile });
-      vscode.window.showInformationMessage(l10n.t('Source file set to: {0}', currentSourceFile));
-      ui.log(`[SYSTEM] ${l10n.t('Source file set to: {0}', currentSourceFile)}`);
-    }),
-
-    vscode.commands.registerCommand('openblink.selectBoard', async () => {
-      const board = await boardManager.selectBoard();
-      if (board) {
-        tasksProvider.update({ boardName: board.displayName });
-        boardReferenceProvider.updateReference(boardManager.getLocalizedReferencePath(board));
-        vscode.window.showInformationMessage(l10n.t('Board set to: {0}', board.displayName));
-        ui.log(`[SYSTEM] ${l10n.t('Board set to: {0}', board.displayName)}`);
-      }
-    }),
-
-    vscode.commands.registerCommand('openblink.selectSlot', async () => {
-      const items = [
-        { label: 'Slot 1', slot: 1 },
-        { label: 'Slot 2', slot: 2 },
-      ];
-      const selected = await vscode.window.showQuickPick(items, {
-        placeHolder: l10n.t('Select a slot'),
-      });
-      if (selected) {
-        currentSlot = selected.slot;
-        await vscode.workspace.getConfiguration('openblink').update('slot', currentSlot, vscode.ConfigurationTarget.Global);
-        tasksProvider.update({ slot: currentSlot });
-        ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, undefined, currentSlot);
-        vscode.window.showInformationMessage(l10n.t('Slot set to: {0}', String(currentSlot)));
-        ui.log(`[SYSTEM] ${l10n.t('Slot set to: {0}', String(currentSlot))}`);
-      }
-    }),
-  );
-}
-
-/**
- * @brief Compile the given Ruby source file and transfer the bytecode over BLE.
- *
- * Acts as a concurrency guard around {@link buildAndBlinkInner}.  If a build
- * is already in progress, the call is silently skipped to prevent overlapping
- * BLE transfers that could corrupt the protocol stream.
- *
- * @param context    Extension context (unused here but kept for API symmetry).
- * @param sourceUri  URI of the Ruby source file to compile.
- * @param options    Optional settings.  When `silent` is true, the concurrency
- *                   skip does not show a user-facing warning (used for
- *                   auto-triggered builds from the save listener).
- *                   When `requestId` is provided, build diagnostics are written
- *                   for MCP integration.
- */
-async function buildAndBlink(context: vscode.ExtensionContext, sourceUri: vscode.Uri, options?: { silent?: boolean; requestId?: string }): Promise<{ success: boolean; error?: string; diagnostics?: string[] }> {
-  if (isBuilding) {
-    ui.log('[SYSTEM] Build already in progress, skipping.');
-    if (!options?.silent) {
-      vscode.window.showWarningMessage(l10n.t('Build already in progress'));
-    }
-    return { success: false, error: 'Build already in progress' };
-  }
-  isBuilding = true;
-  try {
-    return await buildAndBlinkInner(context, sourceUri, options);
-  } finally {
-    isBuilding = false;
-  }
-}
-
-/**
- * @brief Inner implementation of build-and-blink.
- *
- * Reads the source file, compiles it with mrbc, and (if a device is
- * connected) sends the resulting bytecode to the selected program slot.
- * Updates diagnostics, metrics, and the status bar accordingly.
- * Writes build diagnostics for MCP integration.
- *
- * @param context    Extension context (unused here but kept for API symmetry).
- * @param sourceUri  URI of the Ruby source file to compile.
- * @param options    Optional settings including requestId for MCP tracking.
- */
-async function buildAndBlinkInner(
-  context: vscode.ExtensionContext,
-  sourceUri: vscode.Uri,
-  _options?: { requestId?: string }
-): Promise<{ success: boolean; error?: string; diagnostics?: string[] }> {
-  const filePath = sourceUri.fsPath;
-  const errors: Array<{ line: number; column: number; message: string; severity: 'error' | 'warning'; code?: string }> = [];
-
-  try {
-    await vscode.workspace.fs.stat(sourceUri);
-  } catch {
-    const errorMsg = l10n.t('Source file not found: {0}', filePath);
-    vscode.window.showErrorMessage(errorMsg);
-    mcpBridge.updateBuildResult(false, errorMsg);
-
-    // Write diagnostics for MCP
-    mcpBridge.writeBuildDiagnostics({
-      timestamp: new Date().toISOString(),
-      file: filePath,
-      success: false,
-      errors: [{ line: 0, column: 0, message: errorMsg, severity: 'error', code: 'FILE_NOT_FOUND' }],
-      suggestions: ['Ensure the file exists in the workspace', 'Check the file path configuration'],
-    });
-
-    return { success: false, error: errorMsg };
-  }
-
-  // Read source
-  const fileContent = await vscode.workspace.fs.readFile(sourceUri);
-  const rubyCode = new TextDecoder().decode(fileContent);
-
-  // Compile
-  ui.clearDiagnostics(sourceUri);
-  const compileErrors: string[] = [];
-  const result = compile(rubyCode, undefined, (err) => compileErrors.push(err));
-
-  if (!result.success) {
-    ui.log(`[COMPILE] error: ${result.error}`);
-
-    // Parse compile errors for diagnostics
-    const parsedDiagnostics = compileErrors.length > 0
-      ? parseDiagnostics(compileErrors.join('\n'), sourceUri)
-      : [];
-
-    if (parsedDiagnostics.length > 0) {
-      ui.setDiagnostics(sourceUri, parsedDiagnostics);
-      for (const d of parsedDiagnostics) {
-        errors.push({
-          line: d.range.start.line + 1,
-          column: d.range.start.character + 1,
-          message: d.message,
-          severity: d.severity === vscode.DiagnosticSeverity.Error ? 'error' : 'warning',
-        });
-      }
-    } else if (result.error) {
-      errors.push({ line: 0, column: 0, message: result.error, severity: 'error' });
-    }
-
-    vscode.window.showErrorMessage(l10n.t('Compilation failed'));
-    mcpBridge.updateBuildResult(false, result.error ?? 'Compilation failed');
-
-    // Write diagnostics for MCP
-    mcpBridge.writeBuildDiagnostics({
-      timestamp: new Date().toISOString(),
-      file: filePath,
-      success: false,
-      errors,
-      suggestions: ['Check Ruby syntax', 'Review the board API reference for available methods'],
-    });
-
-    return { success: false, error: result.error ?? 'Compilation failed', diagnostics: compileErrors };
-  }
-
-  ui.log(`[COMPILE] success: ${result.compileTime.toFixed(1)}ms, size: ${result.size} bytes`);
-
-  // Transfer via BLE
-  const programChar = bleManager.getProgramCharacteristic();
-  if (!bleManager.isConnected || !programChar || !result.bytecode) {
-    vscode.window.showWarningMessage(l10n.t('Device is not connected'));
-
-    const metrics: MetricsData = { compileTime: result.compileTime, programSize: result.size };
-    ui.recordMetrics(metrics);
-    metricsProvider.updateMetrics(metrics);
-    ui.updateStatusBar(bleManager.connectionState, bleManager.deviceName, metrics, currentSlot);
-    const history = ui.getMetricsHistory();
-    mcpBridge.updateMetricsStatus(metrics, {
-      compile: ui.calculateStats(history.compile),
-      transfer: ui.calculateStats(history.transfer),
-      size: ui.calculateStats(history.size),
-    });
-    mcpBridge.updateBuildResult(false, 'Device is not connected');
-
-    // Write success diagnostics (compilation succeeded, transfer skipped)
-    mcpBridge.writeBuildDiagnostics({
-      timestamp: new Date().toISOString(),
-      file: filePath,
-      success: true,
-      errors: [],
-      suggestions: ['Connect to a device using connect_device to transfer the bytecode'],
-    });
-
-    return { success: false, error: 'Compiled successfully but device is not connected' };
-  }
-
-  const transferStart = performance.now();
-  bleManager.isTransferring = true;
-  try {
-    await sendFirmware(programChar, result.bytecode, currentSlot, bleManager.negotiatedMTU, (msg) => ui.log(msg));
-    const transferTime = performance.now() - transferStart;
-
-    const metrics: MetricsData = {
-      compileTime: result.compileTime,
-      transferTime,
-      programSize: result.size,
-    };
-    ui.recordMetrics(metrics);
-    metricsProvider.updateMetrics(metrics);
-    ui.updateStatusBar('connected', bleManager.deviceName, metrics, currentSlot);
-    const history = ui.getMetricsHistory();
-    mcpBridge.updateMetricsStatus(metrics, {
-      compile: ui.calculateStats(history.compile),
-      transfer: ui.calculateStats(history.transfer),
-      size: ui.calculateStats(history.size),
-    });
-    mcpBridge.updateBuildResult(true);
-
-    // Write success diagnostics
-    mcpBridge.writeBuildDiagnostics({
-      timestamp: new Date().toISOString(),
-      file: filePath,
-      success: true,
-      errors: [],
-      suggestions: ['Use get_console_output to check device output'],
-    });
-
-    ui.log(`[COMPILE] ${l10n.t('Compilation successful: {0}ms, size: {1} bytes', result.compileTime.toFixed(1), String(result.size))}`);
-    ui.log(`[TRANSFER] ${l10n.t('Transfer complete: {0}ms', transferTime.toFixed(1))}`);
-    return { success: true };
-  } catch (error) {
-    const msg = errorMessage(error);
-    ui.log(`[TRANSFER] Error: ${msg}`);
-    vscode.window.showErrorMessage(msg);
-    mcpBridge.updateBuildResult(false, msg);
-
-    // Write failure diagnostics
-    mcpBridge.writeBuildDiagnostics({
-      timestamp: new Date().toISOString(),
-      file: filePath,
-      success: false,
-      errors: [{ line: 0, column: 0, message: msg, severity: 'error', code: 'TRANSFER_FAILED' }],
-      suggestions: ['Check device connection', 'Try reconnecting to the device', 'Check MTU settings'],
-    });
-
-    return { success: false, error: msg };
-  } finally {
-    bleManager.isTransferring = false;
-  }
 }
 
 /**
@@ -890,435 +387,4 @@ async function buildAndBlinkInner(
  */
 export async function deactivate(): Promise<void> {
   await mcpBridge.flushAll();
-}
-
-// ============================================================================
-// MCP Configuration Helpers
-// ============================================================================
-
-/**
- * @brief Build the OpenBlink MCP server entry for `.vscode/mcp.json`.
- *
- * Uses the VS Code 1.106+ workspace `.vscode/mcp.json` schema, which keys
- * servers under the top-level `servers` property (distinct from the legacy
- * `mcpServers` key used by Windsurf/Cursor/Cline).
- *
- * @param context  The extension context supplying paths.
- * @param ipcDir   Absolute path to the IPC directory to inject.
- */
-function buildMcpServerEntry(context: vscode.ExtensionContext, ipcDir: string): {
-  type: 'stdio';
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-} {
-  const mcpServerPath = vscode.Uri.joinPath(context.extensionUri, 'out', 'mcp-server.js').fsPath;
-  return {
-    type: 'stdio',
-    command: 'node',
-    args: [mcpServerPath],
-    env: {
-      OPENBLINK_IPC_DIR: ipcDir,
-      OPENBLINK_EXTENSION_DIR: context.extensionUri.fsPath,
-    },
-  };
-}
-
-/**
- * @brief Install the OpenBlink MCP server into `.vscode/mcp.json`.
- *
- * Creates the file if it does not exist. If it already contains other
- * servers, they are preserved; only the `openblink` entry is added or
- * overwritten. This mirrors the behaviour VS Code 1.106+ expects for
- * workspace-level MCP configuration.
- *
- * @param context  The extension context.
- */
-async function installMcpToWorkspace(context: vscode.ExtensionContext): Promise<void> {
-  const ipcDir = mcpBridge.resolveIpcDir(context);
-  if (!ipcDir) {
-    vscode.window.showErrorMessage(
-      l10n.t('Cannot generate MCP configuration: no workspace is open. Please open a folder first.'),
-    );
-    return;
-  }
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage(
-      l10n.t('Cannot generate MCP configuration: no workspace is open. Please open a folder first.'),
-    );
-    return;
-  }
-
-  const mcpConfigUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'mcp.json');
-  const newEntry = buildMcpServerEntry(context, ipcDir);
-
-  // Try to read the existing mcp.json to preserve other server entries.
-  // Uses a permissive shape (Record<string, unknown>) because the file is
-  // user-editable and may contain arbitrary fields we do not own.
-  let existingConfig: Record<string, unknown> = {};
-  let existed = false;
-  try {
-    const raw = await vscode.workspace.fs.readFile(mcpConfigUri);
-    existed = true;
-    const parsed = JSON.parse(new TextDecoder().decode(raw));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      existingConfig = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // File does not exist or is unparseable — treat as empty.
-  }
-
-  // If the file exists and already has an openblink entry, confirm overwrite
-  // to avoid silently clobbering user-customised settings.
-  const existingServers = existingConfig.servers;
-  const hasExisting = existed
-    && existingServers
-    && typeof existingServers === 'object'
-    && !Array.isArray(existingServers)
-    && (existingServers as Record<string, unknown>)['openblink'] !== undefined;
-
-  if (hasExisting) {
-    const overwrite = l10n.t('Overwrite');
-    const cancel = l10n.t('Cancel');
-    const choice = await vscode.window.showWarningMessage(
-      l10n.t('The \'openblink\' entry already exists in .vscode/mcp.json. Overwrite?'),
-      { modal: true },
-      overwrite,
-      cancel,
-    );
-    if (choice !== overwrite) { return; }
-  }
-
-  // Merge: preserve other servers, overwrite/add openblink.
-  const mergedServers: Record<string, unknown> = (existingServers && typeof existingServers === 'object' && !Array.isArray(existingServers))
-    ? { ...(existingServers as Record<string, unknown>) }
-    : {};
-  mergedServers['openblink'] = newEntry;
-
-  const merged: Record<string, unknown> = { ...existingConfig, servers: mergedServers };
-  const content = JSON.stringify(merged, null, 2) + '\n';
-
-  try {
-    // Ensure the .vscode directory exists before writing.
-    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.vscode'));
-    await vscode.workspace.fs.writeFile(mcpConfigUri, new TextEncoder().encode(content));
-    ui.log(`[MCP] Wrote workspace configuration to ${mcpConfigUri.fsPath}`);
-    vscode.window.showInformationMessage(
-      l10n.t('OpenBlink MCP server installed to .vscode/mcp.json'),
-    );
-    // Open the file so the user can verify the result.
-    const doc = await vscode.workspace.openTextDocument(mcpConfigUri);
-    await vscode.window.showTextDocument(doc);
-  } catch (error) {
-    const msg = errorMessage(error);
-    ui.log(`[MCP] Failed to write workspace configuration: ${msg}`);
-    vscode.window.showErrorMessage(
-      l10n.t('Failed to write .vscode/mcp.json: {0}', msg),
-    );
-  }
-}
-
-/**
- * @brief Show a JSON snippet for non-VS Code IDEs (Windsurf/Cursor/Cline).
- *
- * Writes the `mcpServers`-style configuration into a new unsaved editor
- * document so the user can copy it into their IDE's MCP config file.
- *
- * @param context  The extension context.
- * @param ipcDir   Absolute IPC directory path.
- */
-async function showMcpConfigSnippet(context: vscode.ExtensionContext, ipcDir: string): Promise<void> {
-  const entry = buildMcpServerEntry(context, ipcDir);
-  // The snippet uses the legacy `mcpServers` key expected by Windsurf,
-  // Cursor, and Cline.  The `type` field is omitted here because these
-  // IDEs default to stdio transport.
-  const { type: _type, ...entryWithoutType } = entry;
-  void _type;
-  const configSnippet = JSON.stringify({
-    mcpServers: { openblink: entryWithoutType },
-  }, null, 2);
-
-  const doc = await vscode.workspace.openTextDocument({
-    content: configSnippet,
-    language: 'json',
-  });
-  await vscode.window.showTextDocument(doc);
-  vscode.window.showInformationMessage(
-    l10n.t('Copy this MCP server configuration to your IDE\'s MCP config file.'),
-  );
-}
-
-// ============================================================================
-// MCP Command Handlers
-// ============================================================================
-
-/**
- * @brief Build a short human-readable summary of an MCP command's parameters.
- *
- * Used both for the output-channel log prefix and for the `summary` field
- * of the history entry shown in the MCP Status tree view.  Keep the
- * summary short (ideally <40 chars) so it fits comfortably in the tree
- * description column.
- */
-function summarizeMcpCommand(command: mcpBridge.McpCommand): string {
-  switch (command.type) {
-    case 'scan':
-      return command.timeout !== undefined ? `timeout=${command.timeout}ms` : '';
-    case 'connect':
-      return command.deviceId ? `deviceId=${command.deviceId}` : '';
-    case 'disconnect':
-      return command.force ? 'force' : '';
-    case 'reset':
-      return command.slot !== undefined ? `slot=${command.slot}` : '';
-    case 'cancel':
-      return command.targetRequestId ? `target=${command.targetRequestId}` : '';
-    case 'validate':
-      if (command.code) { return 'inline code'; }
-      return command.file ?? '';
-    default:
-      return '';
-  }
-}
-
-/**
- * @brief Publish an MCP command result to the bridge, history view, and log.
- *
- * Centralises the three side-effects that every command handler performs
- * upon completion:
- *   1. Atomic `command-result.json` write (via the bridge).
- *   2. Update of the MCP Status tree view's history entry.
- *   3. Single `[MCP]` line in the output channel.
- *
- * @param toolName   Name of the tool as shown in the UI (matches the MCP
- *                   tool name, e.g. `scan`, `connect_device`).
- * @param result     The command outcome to write.
- * @param startTime  `Date.now()` captured when the command was received.
- * @param detail     Optional success detail (e.g. device list summary).
- */
-function reportMcpCommandResult(
-  toolName: string,
-  result: mcpBridge.McpCommandResult,
-  startTime: number,
-  detail?: string,
-): void {
-  const durationMs = Date.now() - startTime;
-  mcpBridge.writeCommandResult(result);
-  mcpStatusProvider.updateHistoryEntry(result.requestId, {
-    status: result.success ? 'success' : 'failed',
-    detail: result.success ? detail : (result.error ?? detail),
-    durationMs,
-  });
-  const extra = result.success
-    ? (detail ? ` (${detail})` : '')
-    : (result.error ? ` (${result.error})` : '');
-  ui.log(`[MCP] ${toolName} ${result.success ? 'completed' : 'failed'} in ${durationMs}ms${extra}`);
-}
-
-/**
- * @brief Handle MCP scan command.
- */
-async function handleMcpScanCommand(command: { requestId: string; timeout?: number }): Promise<void> {
-  const startTime = Date.now();
-
-  try {
-    // Start scan (BleManager also sets its own auto-stop timer)
-    await bleManager.startScan();
-
-    // Wait until BleManager's auto-stop fires or the requested timeout elapses,
-    // whichever comes first — avoids the dual-timer issue where the MCP timeout
-    // and BleManager's internal scan timeout could conflict.
-    const scanTimeout = command.timeout ?? 10000;
-    await bleManager.waitForScanCompletion({ timeoutMs: scanTimeout });
-
-    // Ensure scan is fully stopped
-    await bleManager.stopScan();
-
-    // Collect discovered devices
-    const devices: Array<{ id: string; name: string; rssi?: number }> = [];
-    for (const [id, info] of bleManager.discoveredDevices.entries()) {
-      devices.push({ id, name: info.name, rssi: undefined });
-    }
-
-    reportMcpCommandResult('scan', {
-      requestId: command.requestId,
-      success: true,
-      devices,
-    }, startTime, `${devices.length} device(s)`);
-  } catch (error) {
-    const msg = errorMessage(error);
-    reportMcpCommandResult('scan', {
-      requestId: command.requestId,
-      success: false,
-      error: msg,
-    }, startTime);
-  }
-}
-
-/**
- * @brief Handle MCP connect command.
- */
-async function handleMcpConnectCommand(command: { requestId: string; deviceId?: string; timeout?: number }): Promise<void> {
-  const startTime = Date.now();
-  if (!command.deviceId) {
-    reportMcpCommandResult('connect', {
-      requestId: command.requestId,
-      success: false,
-      error: 'deviceId is required',
-    }, startTime);
-    return;
-  }
-
-  try {
-    await bleManager.connectById(command.deviceId);
-
-    reportMcpCommandResult('connect', {
-      requestId: command.requestId,
-      success: true,
-      deviceName: bleManager.deviceName ?? undefined,
-      mtu: bleManager.negotiatedMTU,
-    }, startTime, `${bleManager.deviceName ?? command.deviceId}, MTU=${bleManager.negotiatedMTU}`);
-  } catch (error) {
-    const msg = errorMessage(error);
-    reportMcpCommandResult('connect', {
-      requestId: command.requestId,
-      success: false,
-      error: msg,
-    }, startTime);
-  }
-}
-
-/**
- * @brief Handle MCP disconnect command.
- */
-async function handleMcpDisconnectCommand(command: { requestId: string }): Promise<void> {
-  const startTime = Date.now();
-
-  try {
-    await bleManager.disconnect();
-
-    reportMcpCommandResult('disconnect', {
-      requestId: command.requestId,
-      success: true,
-    }, startTime);
-  } catch (error) {
-    const msg = errorMessage(error);
-    reportMcpCommandResult('disconnect', {
-      requestId: command.requestId,
-      success: false,
-      error: msg,
-    }, startTime);
-  }
-}
-
-/**
- * @brief Handle MCP reset command.
- */
-async function handleMcpResetCommand(command: { requestId: string; slot?: number }): Promise<void> {
-  const startTime = Date.now();
-
-  const programChar = bleManager.getProgramCharacteristic();
-  if (!bleManager.isConnected || !programChar) {
-    reportMcpCommandResult('reset', {
-      requestId: command.requestId,
-      success: false,
-      error: 'Device is not connected',
-    }, startTime);
-    return;
-  }
-
-  try {
-    const resetSlot = command.slot ?? currentSlot;
-    await sendReset(programChar, (msg) => ui.log(msg), resetSlot);
-
-    reportMcpCommandResult('reset', {
-      requestId: command.requestId,
-      success: true,
-    }, startTime, `slot ${resetSlot}`);
-  } catch (error) {
-    const msg = errorMessage(error);
-    reportMcpCommandResult('reset', {
-      requestId: command.requestId,
-      success: false,
-      error: msg,
-    }, startTime);
-  }
-}
-
-/**
- * @brief Handle MCP cancel command.
- *
- * The actual cancellation is performed inside the MCP server (which
- * keeps the authoritative `activeOperations` set).  The extension-side
- * handler just acknowledges the request so the server can complete.
- */
-async function handleMcpCancelCommand(command: { requestId: string; targetRequestId?: string }): Promise<void> {
-  const startTime = Date.now();
-  reportMcpCommandResult('cancel', {
-    requestId: command.requestId,
-    success: true,
-  }, startTime, command.targetRequestId ? `target=${command.targetRequestId}` : 'current');
-}
-
-/**
- * @brief Handle MCP validate command.
- */
-async function handleMcpValidateCommand(command: { requestId: string; file?: string; code?: string }): Promise<void> {
-  const startTime = Date.now();
-
-  try {
-    let rubyCode: string;
-
-    if (command.code) {
-      rubyCode = command.code;
-    } else if (command.file) {
-      const ws = vscode.workspace.workspaceFolders?.[0];
-      const sourceFile = command.file ?? currentSourceFile;
-      const filePath = ws ? path.join(ws.uri.fsPath, sourceFile) : sourceFile;
-
-      // Guard against path traversal (SEC-02): resolved path must be inside workspace
-      if (ws) {
-        const resolvedFile = path.resolve(filePath);
-        const resolvedWsRoot = path.resolve(ws.uri.fsPath);
-        const rel = path.relative(resolvedWsRoot, resolvedFile);
-        if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-          throw new Error('Invalid file path: path traversal detected');
-        }
-      }
-      if (!sourceFile.endsWith('.rb')) {
-        throw new Error('Only .rb files are supported');
-      }
-
-      const fileUri = vscode.Uri.file(filePath);
-      const fileContent = await vscode.workspace.fs.readFile(fileUri);
-      rubyCode = new TextDecoder().decode(fileContent);
-    } else {
-      throw new Error('Either code or file must be provided');
-    }
-
-    // Compile
-    const compileErrors: string[] = [];
-    const result = compile(rubyCode, undefined, (err) => compileErrors.push(err));
-
-    if (result.success) {
-      reportMcpCommandResult('validate', {
-        requestId: command.requestId,
-        success: true,
-      }, startTime, 'syntax OK');
-    } else {
-      reportMcpCommandResult('validate', {
-        requestId: command.requestId,
-        success: false,
-        error: result.error ?? 'Syntax validation failed',
-      }, startTime);
-    }
-  } catch (error) {
-    const msg = errorMessage(error);
-    reportMcpCommandResult('validate', {
-      requestId: command.requestId,
-      success: false,
-      error: msg,
-    }, startTime);
-  }
 }
