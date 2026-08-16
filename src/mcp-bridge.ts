@@ -232,6 +232,73 @@ async function writeTextAtomic(filePath: string, content: string): Promise<void>
 }
 
 // ============================================================================
+// Serialized IPC Queues
+// ============================================================================
+
+/**
+ * @brief Chain of fire-and-forget IPC file writes.
+ *
+ * `result.json`, `command-result.json`, `build-status.json`, and
+ * `build-diagnostics.json` are single-slot files.  Serializing all writes
+ * through one chain guarantees they land on disk in the order they were
+ * issued, so a slow earlier write can never overwrite a newer one.
+ */
+let ipcWriteChain: Promise<void> = Promise.resolve();
+
+/**
+ * @brief Append a write task to the serialized IPC write chain.
+ *
+ * Errors are logged (never rethrown) so a failed write cannot poison the
+ * chain for subsequent writes.
+ *
+ * @param label  Short label used in error log messages.
+ * @param task   Async function performing the write.
+ */
+function enqueueIpcWrite(label: string, task: () => Promise<void>): void {
+  ipcWriteChain = ipcWriteChain.then(task).catch((err) => {
+    log(`[MCP] ${label} failed: ${errorMessage(err)}`);
+  });
+}
+
+/**
+ * @brief Chain serializing consumption of `trigger.json` / `command.json`.
+ *
+ * The fallback watcher (VS Code + `fs.watch`) can deliver several events
+ * for one logical file write.  Running handlers one at a time keeps the
+ * read-then-unlink consume pattern race-free and processes requests FIFO.
+ */
+let consumeChain: Promise<void> = Promise.resolve();
+
+/**
+ * @brief Append a consume task to the serialized consume chain.
+ * @param task  Async function that never rejects (handlers catch internally).
+ */
+function enqueueConsume(task: () => Promise<void>): void {
+  consumeChain = consumeChain.then(task).catch(() => { /* handlers log their own errors */ });
+}
+
+/** @brief Recently handled request IDs, used to drop duplicate watcher deliveries. */
+const handledRequestIds = new Set<string>();
+
+/** @brief Upper bound on the size of {@link handledRequestIds}. */
+const MAX_HANDLED_REQUEST_IDS = 200;
+
+/**
+ * @brief Record a request ID as handled, evicting the oldest entry when full.
+ * @param requestId  Request ID to record.
+ * @returns `false` if the ID was already handled (duplicate delivery).
+ */
+function markRequestHandled(requestId: string): boolean {
+  if (handledRequestIds.has(requestId)) { return false; }
+  handledRequestIds.add(requestId);
+  if (handledRequestIds.size > MAX_HANDLED_REQUEST_IDS) {
+    const oldest = handledRequestIds.values().next().value;
+    if (oldest !== undefined) { handledRequestIds.delete(oldest); }
+  }
+  return true;
+}
+
+// ============================================================================
 // Throttler (at-least-once flush per interval)
 // ============================================================================
 
@@ -277,6 +344,7 @@ function createThrottler(
 ): Throttler {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
+  let inFlightPromise: Promise<void> | undefined;
   let pending = false;
   let disposed = false;
 
@@ -291,17 +359,21 @@ function createThrottler(
     if (disposed) { return; }
     if (inFlight) { pending = true; return; }
     inFlight = true;
-    try {
-      await flusher();
-    } catch (err) {
-      log(`[MCP] ${label} flush error: ${errorMessage(err)}`);
-    } finally {
-      inFlight = false;
-      if (!disposed && pending) {
-        pending = false;
-        scheduleTimer();
+    inFlightPromise = (async () => {
+      try {
+        await flusher();
+      } catch (err) {
+        log(`[MCP] ${label} flush error: ${errorMessage(err)}`);
+      } finally {
+        inFlight = false;
+        inFlightPromise = undefined;
+        if (!disposed && pending) {
+          pending = false;
+          scheduleTimer();
+        }
       }
-    }
+    })();
+    await inFlightPromise;
   };
 
   return {
@@ -312,6 +384,10 @@ function createThrottler(
     },
     flushNow: async () => {
       if (timer) { clearTimeout(timer); timer = undefined; }
+      // Wait for any in-flight flush so the final write is never skipped
+      // (a skipped write would otherwise only be retried by a timer that
+      // dispose() may cancel before it fires).
+      while (inFlightPromise) { await inFlightPromise; }
       await runFlush();
     },
     dispose: () => {
@@ -704,14 +780,10 @@ export function writeBuildResult(result: McpBuildResult): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  void (async () => {
-    try {
-      await writeJsonAtomic(path.join(dir, 'result.json'), result);
-      log(`[MCP] Build result written: ${result.success ? 'Success' : 'Failed'}${result.error ? ` (${result.error})` : ''}`);
-    } catch (err) {
-      log(`[MCP] writeBuildResult failed: ${errorMessage(err)}`);
-    }
-  })();
+  enqueueIpcWrite('writeBuildResult', async () => {
+    await writeJsonAtomic(path.join(dir, 'result.json'), result);
+    log(`[MCP] Build result written: ${result.success ? 'Success' : 'Failed'}${result.error ? ` (${result.error})` : ''}`);
+  });
 }
 
 // ============================================================================
@@ -763,13 +835,13 @@ function startTriggerWatcher(): void {
 
   const handleTrigger = async () => {
     try {
-      // Best-effort consume: read the file and then remove it. If a concurrent
-      // onDidCreate/onDidChange handler already consumed it, one of these calls
-      // throws and we silently skip, avoiding an explicit existsSync TOCTOU check.
+      // Best-effort consume: read the file and then remove it. Handlers run
+      // serialized on the consume chain, so if an earlier delivery already
+      // consumed the file, the read throws and we silently skip.
       let raw: string;
       try {
-        raw = fs.readFileSync(triggerPath, 'utf-8');
-        fs.unlinkSync(triggerPath);
+        raw = await fs.promises.readFile(triggerPath, 'utf-8');
+        await fs.promises.unlink(triggerPath);
       } catch {
         return; // File already consumed or does not exist
       }
@@ -782,6 +854,10 @@ function startTriggerWatcher(): void {
       }
       if (!trigger.requestId || typeof trigger.requestId !== 'string') {
         log('[MCP] Ignoring trigger.json without requestId');
+        return;
+      }
+      if (!markRequestHandled(trigger.requestId)) {
+        log(`[MCP] Ignoring duplicate trigger delivery: ${trigger.requestId}`);
         return;
       }
       if (onTriggerCallback) {
@@ -808,11 +884,11 @@ function startTriggerWatcher(): void {
     }
   };
 
-  triggerWatcher = createFallbackWatcher(dir, 'trigger.json', () => { void handleTrigger(); });
+  triggerWatcher = createFallbackWatcher(dir, 'trigger.json', () => { enqueueConsume(handleTrigger); });
 
   // Process any trigger.json that was written before the watcher started
   if (fs.existsSync(triggerPath)) {
-    void handleTrigger();
+    enqueueConsume(handleTrigger);
   }
 }
 
@@ -839,8 +915,8 @@ function startCommandWatcher(): void {
     try {
       let raw: string;
       try {
-        raw = fs.readFileSync(commandPath, 'utf-8');
-        fs.unlinkSync(commandPath);
+        raw = await fs.promises.readFile(commandPath, 'utf-8');
+        await fs.promises.unlink(commandPath);
       } catch {
         return; // File already consumed or does not exist
       }
@@ -855,6 +931,10 @@ function startCommandWatcher(): void {
         log('[MCP] Ignoring command.json without requestId');
         return;
       }
+      if (!markRequestHandled(command.requestId)) {
+        log(`[MCP] Ignoring duplicate command delivery: ${command.requestId}`);
+        return;
+      }
       if (onCommandCallback) {
         await onCommandCallback(command);
       }
@@ -863,11 +943,11 @@ function startCommandWatcher(): void {
     }
   };
 
-  commandWatcher = createFallbackWatcher(dir, 'command.json', () => { void handleCommand(); });
+  commandWatcher = createFallbackWatcher(dir, 'command.json', () => { enqueueConsume(handleCommand); });
 
   // Process any command.json that was written before the watcher started
   if (fs.existsSync(commandPath)) {
-    void handleCommand();
+    enqueueConsume(handleCommand);
   }
 }
 
@@ -886,13 +966,9 @@ export function writeCommandResult(result: McpCommandResult): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  void (async () => {
-    try {
-      await writeJsonAtomic(path.join(dir, 'command-result.json'), result);
-    } catch (err) {
-      log(`[MCP] writeCommandResult failed: ${errorMessage(err)}`);
-    }
-  })();
+  enqueueIpcWrite('writeCommandResult', async () => {
+    await writeJsonAtomic(path.join(dir, 'command-result.json'), result);
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -910,14 +986,10 @@ export function writeBuildDiagnostics(diagnostics: McpBuildDiagnostics): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
-  void (async () => {
-    try {
-      await writeJsonAtomic(path.join(dir, 'build-diagnostics.json'), diagnostics);
-      log(`[MCP] Build diagnostics written: ${diagnostics.errors.length} issue(s)`);
-    } catch (err) {
-      log(`[MCP] writeBuildDiagnostics failed: ${errorMessage(err)}`);
-    }
-  })();
+  enqueueIpcWrite('writeBuildDiagnostics', async () => {
+    await writeJsonAtomic(path.join(dir, 'build-diagnostics.json'), diagnostics);
+    log(`[MCP] Build diagnostics written: ${diagnostics.errors.length} issue(s)`);
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -945,20 +1017,18 @@ export function updateBuildStatus(status: Partial<McpBuildStatus>): void {
  * @brief Atomically write the current build status to `build-status.json`.
  *
  * Fire-and-forget; errors are logged.  Uses a fresh closure over the
- * current status snapshot so concurrent updates see a consistent write.
+ * current status snapshot so concurrent updates see a consistent write,
+ * and chains onto the serialized write queue so successive status writes
+ * always land in issue order.
  */
 function flushBuildStatus(): void {
   if (!enabled) { return; }
   const dir = ensureDir();
   if (!dir) { return; }
   const snapshot = { ...currentBuildStatus };
-  void (async () => {
-    try {
-      await writeJsonAtomic(path.join(dir, 'build-status.json'), snapshot);
-    } catch (err) {
-      log(`[MCP] flushBuildStatus failed: ${errorMessage(err)}`);
-    }
-  })();
+  enqueueIpcWrite('flushBuildStatus', async () => {
+    await writeJsonAtomic(path.join(dir, 'build-status.json'), snapshot);
+  });
 }
 
 /**
@@ -996,6 +1066,23 @@ export function markBuildCompleted(requestId: string, success: boolean): void {
 // ============================================================================
 // Lifecycle
 // ============================================================================
+
+/**
+ * @brief Flush all pending IPC state to disk.
+ *
+ * Forces the status and console throttlers to write immediately and waits
+ * for the serialized write chain to drain.  Called from the extension's
+ * `deactivate` hook so the MCP server sees the final state (e.g. the last
+ * connection state and console lines) after the extension host shuts down.
+ */
+export async function flushAll(): Promise<void> {
+  // Let any in-flight trigger/command handler finish so its result write
+  // is enqueued before the bridge is disabled by dispose().
+  await consumeChain;
+  await statusThrottler.flushNow();
+  await consoleThrottler.flushNow();
+  await ipcWriteChain;
+}
 
 /**
  * @brief Initialize the MCP bridge.

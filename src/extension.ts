@@ -885,11 +885,15 @@ async function buildAndBlinkInner(
 /**
  * @brief Extension deactivation hook.
  *
- * Currently a no-op; cleanup is handled by the disposables registered
- * in {@link activate}.  The BLE manager's {@link BleManager.dispose}
- * performs a best-effort BLE disconnect to avoid connection leaks.
+ * Flushes pending MCP IPC state (status, console, and queued writes) so
+ * the MCP server sees the final snapshot, then lets the disposables
+ * registered in {@link activate} handle the remaining cleanup.  The BLE
+ * manager's {@link BleManager.dispose} performs a best-effort BLE
+ * disconnect to avoid connection leaks.
  */
-export function deactivate() {}
+export async function deactivate(): Promise<void> {
+  await mcpBridge.flushAll();
+}
 
 // ============================================================================
 // MCP Configuration Helpers
