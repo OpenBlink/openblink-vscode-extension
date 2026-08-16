@@ -9,6 +9,16 @@ import * as ui from './ui-manager';
 import * as mcpBridge from './mcp-bridge';
 import { errorMessage } from './error-utils';
 
+/**
+ * @brief Build the OpenBlink MCP server entry for `.vscode/mcp.json`.
+ *
+ * Uses the VS Code 1.106+ workspace `.vscode/mcp.json` schema, which keys
+ * servers under the top-level `servers` property (distinct from the legacy
+ * `mcpServers` key used by Windsurf/Cursor/Cline).
+ *
+ * @param context  The extension context supplying paths.
+ * @param ipcDir   Absolute path to the IPC directory to inject.
+ */
 export function buildMcpServerEntry(context: vscode.ExtensionContext, ipcDir: string): {
   type: 'stdio';
   command: string;

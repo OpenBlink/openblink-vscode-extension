@@ -18,8 +18,38 @@ import { handleMcpBuildTrigger, handleMcpCommand } from './mcp-command-handlers'
 import { installMcpToWorkspace, showMcpConfigSnippet } from './mcp-config-installer';
 import { registerCommands } from './commands';
 
+/**
+ * @brief Control characters stripped from device console output (all except
+ * printable ASCII and common whitespace) to prevent terminal/prompt injection
+ * from malicious BLE devices.
+ */
 const CONSOLE_CONTROL_CHARS = /[\x00-\x08\x0B-\x1F\x7F]/g;
 
+/**
+ * @brief Extension activation entry point.
+ *
+ * Called by VS Code when the extension is first activated. Initialises the
+ * output channel, status bar, BLE manager, tree-view providers (including
+ * the {@link DevicesTreeProvider} for BLE device scanning/selection),
+ * board definitions, and the mruby WASM compiler.  Restores saved devices
+ * from `globalState` and registers all user-facing commands, including
+ * scan start/stop, device connection by ID, and device forget.
+ *
+ * Registers an `onDidSaveTextDocument` listener that automatically triggers
+ * a build-and-blink cycle when the user saves a `.rb` file that is currently
+ * focused in the active editor.  Background saves (e.g. `files.autoSave`,
+ * format-on-save of non-focused files) are ignored to prevent unintended
+ * BLE transfers.
+ *
+ * Also registers a `onDidChangeConfiguration` listener so that changes to
+ * `openblink.sourceFile`, `openblink.slot`, and `openblink.board` made
+ * via the Settings UI are reflected immediately without reloading.
+ *
+ * The extension version is read dynamically from `package.json` via
+ * `vscode.extensions.getExtension()` to avoid hard-coded version drift.
+ *
+ * @param context  Extension context provided by VS Code.
+ */
 export function activate(context: vscode.ExtensionContext) {
   const state = new ExtensionState();
   // Initialize UI
@@ -346,7 +376,15 @@ export function activate(context: vscode.ExtensionContext) {
 
 }
 
-
+/**
+ * @brief Extension deactivation hook.
+ *
+ * Flushes pending MCP IPC state (status, console, and queued writes) so
+ * the MCP server sees the final snapshot, then lets the disposables
+ * registered in {@link activate} handle the remaining cleanup.  The BLE
+ * manager's {@link BleManager.dispose} performs a best-effort BLE
+ * disconnect to avoid connection leaks.
+ */
 export async function deactivate(): Promise<void> {
   await mcpBridge.flushAll();
 }

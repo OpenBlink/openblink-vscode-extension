@@ -13,6 +13,7 @@ import { ExtensionState, SAVED_DEVICES_KEY } from './extension-state';
 import { buildAndBlink } from './build-pipeline';
 import { errorMessage } from './error-utils';
 
+/** @brief Register all user-facing VS Code commands. */
 export function registerCommands(context: vscode.ExtensionContext, state: ExtensionState): void {
   context.subscriptions.push(
     // Legacy command kept for backward-compatibility; now starts a scan
