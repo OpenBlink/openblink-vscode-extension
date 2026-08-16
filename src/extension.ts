@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as l10n from '@vscode/l10n';
 import * as path from 'path';
 import { BleManager } from './ble-manager';
+import { errorMessage } from './error-utils';
 import { initCompiler, compile, parseDiagnostics } from './compiler';
 import { sendFirmware, sendReset } from './protocol';
 import * as boardManager from './board-manager';
@@ -16,6 +17,13 @@ import { BLE_CONSTANTS, MetricsData, SavedDevice } from './types';
 
 /** @brief globalState key for persisted saved-device list. */
 const SAVED_DEVICES_KEY = 'openblink.savedDevices';
+
+/**
+ * @brief Control characters stripped from device console output (all except
+ * printable ASCII and common whitespace) to prevent terminal/prompt injection
+ * from malicious BLE devices.
+ */
+const CONSOLE_CONTROL_CHARS = /[\x00-\x08\x0B-\x1F\x7F]/g;
 
 /** @brief Singleton BLE manager instance. */
 let bleManager: BleManager;
@@ -133,14 +141,13 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   bleManager.onConsoleOutput((message) => {
-    for (const line of message.split('\n')) {
-      // Strip carriage returns and control characters (except printable ASCII
-      // and common whitespace) to prevent terminal/prompt injection from
-      // malicious BLE devices.
-      const sanitized = line.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
+    const lines = message.includes('\n') ? message.split('\n') : [message];
+    for (const line of lines) {
+      const sanitized = line.replace(CONSOLE_CONTROL_CHARS, '');
       if (sanitized.length > 0) {
-        ui.log(`[DEVICE] ${sanitized}`);
-        ui.appendConsoleLog(`[DEVICE] ${sanitized}`);
+        const formatted = `[DEVICE] ${sanitized}`;
+        ui.log(formatted);
+        ui.appendConsoleLog(formatted);
       }
     }
     mcpBridge.scheduleConsoleWrite();
@@ -244,7 +251,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Mark build as completed
       mcpBridge.markBuildCompleted(requestId, buildResult.success);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errorMessage(error);
       const durationMs = Date.now() - startTime;
       mcpBridge.writeBuildResult({ requestId, success: false, error: msg });
       mcpStatusProvider.update({ lastResultTime: new Date(), lastResultSuccess: false, lastResultError: msg });
@@ -406,7 +413,7 @@ export function activate(context: vscode.ExtensionContext) {
   initCompiler(context.extensionUri).then(() => {
     ui.log('[SYSTEM] mrbc WASM compiler initialized.');
   }).catch((error: unknown) => {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     ui.log(`[SYSTEM] Compiler initialization failed: ${msg}`);
     vscode.window.showErrorMessage(l10n.t('Compiler initialization failed: {0}', msg));
   });
@@ -438,7 +445,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await buildAndBlink(context, document.uri, { silent: true });
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         ui.log(`[SYSTEM] Build error: ${msg}`);
         vscode.window.showErrorMessage(msg);
       }
@@ -497,7 +504,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await bleManager.startScan();
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         vscode.window.showErrorMessage(msg);
       }
     }),
@@ -508,7 +515,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await bleManager.startScan();
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         vscode.window.showErrorMessage(msg);
       }
     }),
@@ -528,7 +535,7 @@ export function activate(context: vscode.ExtensionContext) {
         devicesProvider.updateConnection('connecting', deviceId);
         await bleManager.connectById(deviceId);
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         vscode.window.showErrorMessage(msg);
       }
     }),
@@ -562,7 +569,7 @@ export function activate(context: vscode.ExtensionContext) {
             }, BLE_CONSTANTS.DISCOVERY_POLL_INTERVAL);
           });
         } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
+          const msg = errorMessage(error);
           vscode.window.showErrorMessage(msg);
           return;
         }
@@ -571,7 +578,7 @@ export function activate(context: vscode.ExtensionContext) {
         devicesProvider.updateConnection('connecting', deviceId);
         await bleManager.connectById(deviceId);
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         vscode.window.showErrorMessage(msg);
       }
     }),
@@ -603,7 +610,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         ui.log(`[SYSTEM] Build error: ${msg}`);
         vscode.window.showErrorMessage(msg);
       }
@@ -619,7 +626,7 @@ export function activate(context: vscode.ExtensionContext) {
         await sendReset(programChar, (msg) => ui.log(msg));
         vscode.window.showInformationMessage(l10n.t('Soft reset executed'));
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = errorMessage(error);
         vscode.window.showErrorMessage(msg);
       }
     }),
@@ -862,7 +869,7 @@ async function buildAndBlinkInner(
     ui.log(`[TRANSFER] ${l10n.t('Transfer complete: {0}ms', transferTime.toFixed(1))}`);
     return { success: true };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     ui.log(`[TRANSFER] Error: ${msg}`);
     vscode.window.showErrorMessage(msg);
     mcpBridge.updateBuildResult(false, msg);
@@ -1015,7 +1022,7 @@ async function installMcpToWorkspace(context: vscode.ExtensionContext): Promise<
     const doc = await vscode.workspace.openTextDocument(mcpConfigUri);
     await vscode.window.showTextDocument(doc);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     ui.log(`[MCP] Failed to write workspace configuration: ${msg}`);
     vscode.window.showErrorMessage(
       l10n.t('Failed to write .vscode/mcp.json: {0}', msg),
@@ -1159,7 +1166,7 @@ async function handleMcpScanCommand(command: { requestId: string; timeout?: numb
       devices,
     }, startTime, `${devices.length} device(s)`);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     reportMcpCommandResult('scan', {
       requestId: command.requestId,
       success: false,
@@ -1192,7 +1199,7 @@ async function handleMcpConnectCommand(command: { requestId: string; deviceId?: 
       mtu: bleManager.negotiatedMTU,
     }, startTime, `${bleManager.deviceName ?? command.deviceId}, MTU=${bleManager.negotiatedMTU}`);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     reportMcpCommandResult('connect', {
       requestId: command.requestId,
       success: false,
@@ -1215,7 +1222,7 @@ async function handleMcpDisconnectCommand(command: { requestId: string }): Promi
       success: true,
     }, startTime);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     reportMcpCommandResult('disconnect', {
       requestId: command.requestId,
       success: false,
@@ -1249,7 +1256,7 @@ async function handleMcpResetCommand(command: { requestId: string; slot?: number
       success: true,
     }, startTime, `slot ${resetSlot}`);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     reportMcpCommandResult('reset', {
       requestId: command.requestId,
       success: false,
@@ -1326,7 +1333,7 @@ async function handleMcpValidateCommand(command: { requestId: string; file?: str
       }, startTime);
     }
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = errorMessage(error);
     reportMcpCommandResult('validate', {
       requestId: command.requestId,
       success: false,

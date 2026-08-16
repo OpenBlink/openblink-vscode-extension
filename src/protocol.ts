@@ -165,6 +165,7 @@ export async function sendFirmware(
  * @param programCharacteristic  BLE characteristic for the program endpoint.
  * @param onProgress             Optional callback invoked with a completion message.
  * @param slot                   Optional program slot (1 or 2) to reset.
+ * @throws Error if the slot is specified and not 1 or 2.
  */
 export async function sendReset(
   programCharacteristic: NobleCharacteristic,
@@ -173,6 +174,9 @@ export async function sendReset(
 ): Promise<void> {
   // If slot is specified, include it in the packet
   if (slot !== undefined) {
+    if (slot !== 1 && slot !== 2) {
+      throw new Error(`Invalid slot number: ${slot}. Must be 1 or 2`);
+    }
     const buffer = new ArrayBuffer(3);
     const view = new DataView(buffer);
     view.setUint8(0, 0x01);                          // Protocol version

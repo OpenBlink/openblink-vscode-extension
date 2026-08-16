@@ -50,6 +50,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ConnectionState, MetricsData, MetricsStats, getMcpStatusDebounce, getMcpConsoleDebounce } from './types';
 import { getConsoleLog, log } from './ui-manager';
+import { errorMessage } from './error-utils';
 
 // ============================================================================
 // Command Types
@@ -188,11 +189,6 @@ export function resolveIpcDir(context: vscode.ExtensionContext): string | undefi
 
 /** @brief Monotonic counter to ensure unique tmp paths even within the same millisecond. */
 let tmpCounter = 0;
-
-/** @brief Extract a human-readable error message from any thrown value. */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * @brief Atomically write a JSON file using a temp file + rename.
