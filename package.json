@@ -343,7 +343,7 @@
     "@abandonware/noble": "^1.9.2-26",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vscode/l10n": "^0.0.18",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "overrides": {
     "diff": "^9.0.0",
