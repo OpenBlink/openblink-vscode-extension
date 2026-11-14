@@ -1,11 +1,11 @@
 # Makefile for OpenBlink VSCode Extension
 # Builds mrbc (mruby bytecode compiler) for WebAssembly
-# Requires Emscripten 5.0.7
+# Requires Emscripten 7.0.0
 
 # ============================================================================
 # Configuration
 # ============================================================================
-EMSDK_VERSION    := 5.0.7
+EMSDK_VERSION    := 7.0.0
 MRUBY_BUILD_CONFIG := mruby_build_config.rb
 WASM_OUT_DIR     := resources/wasm
 WASM_BUILD_DIR   := resources/wasm_build
