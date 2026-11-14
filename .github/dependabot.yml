@@ -21,6 +21,13 @@ updates:
       - dependency-name: "@types/node"
         update-types:
           - "version-update:semver-major"
+      # TypeScript 7 is the native (tsgo) compiler: the npm package only
+      # exposes unstable ./unstable/* API entry points, so ts-loader 9 and
+      # `tsc -p .` cannot consume it. Stay on 6.x until the toolchain story
+      # for bundlers is settled.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
     groups:
       devDependencies:
         patterns:

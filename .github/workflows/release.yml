@@ -152,7 +152,7 @@ jobs:
         shell: bash
         run: rm -rf node_modules/@abandonware/bluetooth-hci-socket
       - name: Package VSIX (${{ matrix.target }})
-        run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }}
+        run: npx --yes @vscode/vsce@4 package --target ${{ matrix.target }}
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7
         with:
@@ -172,7 +172,7 @@ jobs:
           node-version: 24
           check-latest: true
       - name: Install publishers
-        run: npm install -g @vscode/vsce@3 ovsx@0
+        run: npm install -g @vscode/vsce@4 ovsx@1
       - name: Download all VSIX artifacts
         uses: actions/download-artifact@v8
         with:
