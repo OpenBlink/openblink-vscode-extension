@@ -1,6 +1,10 @@
 # Generic Board Reference
 
-This board supports mruby/c standard library functions.
+This board supports mruby/c release4.0.0 standard library functions.
+
+## Language Features
+
+In addition to standard Ruby syntax supported by mruby/c, mruby/c release4.0.0 supports **pattern matching** (`case`/`in`): array patterns, hash patterns, find patterns, pin operator (`^var`), and guard clauses. `case`/`in` without `else` raises `NoMatchingPatternError` when no pattern matches.
 
 ## Global Functions
 
@@ -31,7 +35,9 @@ Dynamic array collection.
 
 ### Methods
 - `array[index]` — Get element at index
+- `array[range]` — Get sub-array by Range (e.g. `array[1..3]`)
 - `array[index] = value` — Set element at index
+- `array.deconstruct` — Return self for array destructuring in pattern matching
 - `array.length` — Return array length
 - `array.size` — Return array size (alias for length)
 - `array.empty?` — Check if array is empty
@@ -150,6 +156,8 @@ Key-value pairs collection.
 - `hash.values` — Return array of values
 - `hash.has_key?(key)` — Check if key exists
 - `hash.has_value?(value)` — Check if value exists
+- `hash.fetch(key, default)` — Get value by key, or default (or block result) if missing
+- `hash.deconstruct_keys(keys)` — Sub-hash of given keys for pattern matching
 - `hash.delete(key)` — Remove key-value pair
 - `hash.clear` — Remove all pairs
 - `hash.each { |key, value| ... }` — Iterate over pairs

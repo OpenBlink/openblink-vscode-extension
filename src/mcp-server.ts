@@ -1899,7 +1899,7 @@ const PROMPT_CONTEXT = [
   'You control it exclusively through the MCP tools of the "OpenBlink" server; there is no shell or serial port.',
   '',
   'Hard constraints — violating any of these produces broken or undeployable programs:',
-  '- The target runs mruby/c, a small subset of Ruby: no gems, no require, no File/IO/Net/Thread, no String#format edge cases. Prefer simple loops, integers, and basic String/Array/Hash usage.',
+  '- The target runs mruby/c, a small subset of Ruby: no gems, no require, no File/IO/Net/Thread, no String#format edge cases. Prefer simple loops, integers, and basic String/Array/Hash usage. Pattern matching (`case`/`in`) is supported on mruby/c release4.0.0+.',
   '- Hardware APIs (LED, buttons, timers, etc.) differ per board. The ONLY authoritative API list is the get_board_reference tool (also available as the openblink://board/reference resource). Never invent or assume a method that is not documented there.',
   '- Compiled bytecode must stay small (roughly 15 KB); keep programs short and avoid large literals.',
   '- Long-running programs must be an explicit loop with a sleep inside (e.g. `while true; ...; sleep 0.1; end`); a program that falls off the end simply stops.',

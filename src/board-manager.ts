@@ -25,7 +25,7 @@ let currentBoard: Board | null = null;
  * {@link BOARD_LIST}. If no board has been selected yet, restores the
  * previous selection from the `openblink.board` workspace setting.
  * If no saved setting is found, defaults to the Generic board which provides
- * mruby/c release3.4.1 standard library functions.
+ * mruby/c release4.0.0 standard library functions.
  *
  * @param extensionUri  Base URI of the installed extension.
  * @returns Array of loaded {@link Board} objects.
