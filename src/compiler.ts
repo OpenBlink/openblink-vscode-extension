@@ -98,7 +98,10 @@ export function compile(
 
   mrbcModule.FS.writeFile(inputFileName, rubyCode);
 
-  const args = ['mrbc', '-o', outputFileName, inputFileName];
+  // --remove-lv strips the LVAR section (local variable names) from the
+  // bytecode: smaller BLE payload. mruby/c never reads the LVAR section,
+  // so execution is unaffected.
+  const args = ['mrbc', '--remove-lv', '-o', outputFileName, inputFileName];
   const argc = args.length;
 
   // Allocate argv array and individual argument strings in Emscripten heap

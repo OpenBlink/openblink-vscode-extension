@@ -325,8 +325,8 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.20.5",
     "@types/vscode": "1.102.0",
-    "@typescript-eslint/eslint-plugin": "^8.72.2",
-    "@typescript-eslint/parser": "^8.72.2",
+    "@typescript-eslint/eslint-plugin": "^8.73.0",
+    "@typescript-eslint/parser": "^8.73.0",
     "@vscode/l10n-dev": "^0.0.35",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
@@ -336,7 +336,7 @@
     "ovsx": "^1.4.0",
     "ts-loader": "^9.6.2",
     "typescript": "^6.0.3",
-    "webpack": "^5.112.2",
+    "webpack": "^5.113.0",
     "webpack-cli": "^7.3.1"
   },
   "dependencies": {
@@ -351,7 +351,8 @@
     "tar": "^7.5.23",
     "node-gyp": "^13.1.0",
     "@mapbox/node-pre-gyp": "^2.0.3",
-    "minimatch": "^11.0.8",
-    "glob": "^14.0.6"
+    "minimatch": "^11.0.9",
+    "glob": "^14.0.6",
+    "@typescript/native": "npm:typescript@^7.0.2"
   }
 }

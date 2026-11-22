@@ -81,7 +81,7 @@ Only needed if you want to rebuild the WASM compiler from source.
 Requires additional prerequisites: Python 3, Make, Ruby.
 
 ```bash
-make setup-emsdk                      # Install Emscripten 5.0.5 (once)
+make setup-emsdk                      # Install Emscripten 7.0.1 (once)
 source vendor/emsdk/emsdk_env.sh      # Activate Emscripten
 make                                  # Build mrbc.js + mrbc.wasm
 ```

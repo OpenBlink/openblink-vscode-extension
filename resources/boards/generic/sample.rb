@@ -1,5 +1,5 @@
 # Generic Board Sample Code
-# This demonstrates mruby/c release3.4.1 standard library functions
+# This demonstrates mruby/c release4.0.0 standard library functions
 
 # Array operations
 numbers = [1, 2, 3, 4, 5]

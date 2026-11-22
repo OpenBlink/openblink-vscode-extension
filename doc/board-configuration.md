@@ -32,7 +32,7 @@ resources/boards/
   "name": "generic",
   "displayName": "Generic",
   "manufacturer": "Generic",
-  "description": "Generic board with mruby/c release3.4.1 standard library functions"
+  "description": "Generic board with mruby/c release4.0.0 standard library functions"
 }
 ```
 
@@ -51,7 +51,7 @@ A working Ruby sample program for the board. This is shown when a user selects t
 
 ```ruby
 # Generic Board Sample - Standard mruby/c Functions
-# Demonstrates basic mruby/c release3.4.1 standard library usage
+# Demonstrates basic mruby/c release4.0.0 standard library usage
 
 # Array operations
 numbers = [1, 2, 3, 4, 5]
@@ -62,7 +62,7 @@ text = "Hello, mruby/c!"
 puts "String: #{text.upcase}"
 
 # Hash operations
-data = {name: "Generic", version: "3.4.1"}
+data = {name: "Generic", version: "4.0.0"}
 puts "Hash: #{data}"
 
 # Math operations
@@ -97,7 +97,7 @@ const BOARD_LIST = ['generic', 'm5stamps3', 'xiao-nrf54l15', 'your-new-board'];
 
 ## Board Selection
 
-On first launch, the Generic board is automatically selected as the default board, providing mruby/c release3.4.1 standard library functions. The previous selection is restored from the `openblink.board` setting if available, otherwise Generic board is used.
+On first launch, the Generic board is automatically selected as the default board, providing mruby/c release4.0.0 standard library functions. The previous selection is restored from the `openblink.board` setting if available, otherwise Generic board is used.
 
 ```mermaid
 flowchart TD

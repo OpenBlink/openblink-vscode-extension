@@ -20,7 +20,7 @@ cd openblink-vscode-extension
 # Or initialize submodules in an existing clone
 git submodule update --init --recursive
 
-# Install and activate Emscripten 5.0.5
+# Install and activate Emscripten 7.0.1
 make setup-emsdk
 
 # Activate Emscripten in your shell
@@ -74,21 +74,19 @@ The mruby cross-compilation is configured in `mruby_build_config.rb`:
 | Target | Description |
 |--------|-------------|
 | `all` (default) | Build mrbc |
-| `setup-emsdk` | Install and activate Emscripten 5.0.5 |
+| `setup-emsdk` | Install and activate Emscripten 7.0.1 |
 | `mrbc` | Build mrbc with prerequisite checks |
 | `clean` | Remove all build artifacts |
 | `rebuild` | Clean and rebuild all |
 | `help` | Show available targets |
 
-## Emscripten 5.0.5 Migration Notes
+## Emscripten Version Notes
 
-Upgraded from Emscripten 4.0.23. Key changes:
+Currently on Emscripten 7.0.1 (upgraded from 5.0.5 via 7.0.0). Historical migration notes:
 
 - **Flag syntax**: Use `-sFLAG=value` (without space after `-s`)
-- **5.0.0**: LLVM 21.1.8, new `-sEXECUTABLE` setting
-- **5.0.1**: `WASM_OBJECT_FILES` setting removed
-- **5.0.3**: `FS.write` only accepts TypedArray
-- **5.0.5**: C++ exceptions always thrown as CppException objects
+- **5.0.x**: LLVM 21.x, `WASM_OBJECT_FILES` removed, `FS.write` accepts only TypedArray, C++ exceptions thrown as CppException objects
+- **7.0.x**: `WASM_BIGINT` deprecated (removed from build config), `DISABLE_EXCEPTION_CATCHING` is meaningless for C-only links (removed), `MRB_NO_PRESYM`/`conf.disable_presym` no longer exists upstream
 
 ## Platform-Specific VSIX Packaging
 

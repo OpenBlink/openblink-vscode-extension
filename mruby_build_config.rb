@@ -4,7 +4,7 @@ MRuby::Build.new('emscripten') do |conf|
   # Output directory for mrbc.js and mrbc.wasm
   conf.build_dir = File.expand_path('resources/wasm_build', __dir__)
 
-  # Compiler settings (Emscripten 5.0.7)
+  # Compiler settings (Emscripten 7.0.1)
   conf.cc.command = 'emcc'
   conf.cxx.command = 'em++'
   conf.linker.command = 'emcc'
@@ -18,7 +18,6 @@ MRuby::Build.new('emscripten') do |conf|
   # WebAssembly settings — target Node.js for VS Code extension
   conf.linker.flags << '-sWASM=1'
   conf.linker.flags << '-sENVIRONMENT=node'
-  conf.linker.flags << '-sWASM_BIGINT=1'              # Use BigInt for i64 (Emscripten 5.0.7)
 
   # Module settings — MODULARIZE for safe require() loading (no eval)
   conf.linker.flags << '-sMODULARIZE=1'
@@ -27,7 +26,7 @@ MRuby::Build.new('emscripten') do |conf|
 
   # Memory settings
   conf.linker.flags << '-sALLOW_MEMORY_GROWTH=1'
-  conf.linker.flags << '-sINITIAL_HEAP=33554432'    # 32MB (INITIAL_HEAP is recommended over INITIAL_MEMORY in 5.0.7)
+  conf.linker.flags << '-sINITIAL_HEAP=33554432'    # 32MB (INITIAL_HEAP is recommended over INITIAL_MEMORY)
   conf.linker.flags << '-sMAXIMUM_MEMORY=268435456'   # 256MB
   conf.linker.flags << '-sSTACK_SIZE=5242880'         # 5MB
   conf.linker.flags << '-sMALLOC=emmalloc'
@@ -38,8 +37,7 @@ MRuby::Build.new('emscripten') do |conf|
 
   # Performance settings
   conf.linker.flags << '-sASSERTIONS=0'               # Disabled for performance (default is 0 at -O1+)
-  conf.linker.flags << '-sDISABLE_EXCEPTION_CATCHING=1'
-  conf.linker.flags << '-sEVAL_CTORS=1'               # Evaluate constructors at compile time (Emscripten 5.0.7)
+  conf.linker.flags << '-sEVAL_CTORS=1'               # Evaluate constructors at compile time
 
   # Stability settings
   conf.linker.flags << '-sSTACK_OVERFLOW_CHECK=1'     # Security cookie with zero performance overhead
@@ -55,7 +53,6 @@ MRuby::Build.new('emscripten') do |conf|
 
   conf.build_mrbc_exec
   conf.disable_libmruby
-  conf.disable_presym
 end
 
 # Post-build: Copy mrbc.js and mrbc.wasm to resources/wasm

@@ -4,7 +4,9 @@ This document describes how the mruby bytecode compiler (mrbc) works within the 
 
 ## Overview
 
-The extension uses Emscripten-compiled mrbc running as WebAssembly in the Node.js extension host. The MODULARIZE pattern provides safe, isolated module instances without `eval()`.
+The extension uses Emscripten-compiled mrbc (mruby 4.0.0) running as WebAssembly in the Node.js extension host. The MODULARIZE pattern provides safe, isolated module instances without `eval()`.
+
+Compiled output uses the **RITE0400** bytecode format, which requires devices running mruby/c release4.0.0 or later; older mruby/c VMs reject it with a bytecode version mismatch. mrbc is invoked with `--remove-lv`, which strips the LVAR section (local variable names) to shrink the BLE payload; mruby/c never reads that section, so execution is unaffected.
 
 ## Loading Flow
 
@@ -23,7 +25,7 @@ flowchart TD
 flowchart TD
     A["Ruby source code"] --> B["FS.writeFile('temp.rb', code)"]
     B --> C["Allocate argv on WASM heap"]
-    C --> D["Module._main(argc, argv)<br/>mrbc -o temp.mrb temp.rb"]
+    C --> D["Module._main(argc, argv)<br/>mrbc --remove-lv -o temp.mrb temp.rb"]
     D --> E{Exit code == 0?}
     E -->|Yes| F["FS.readFile('temp.mrb')"]
     E -->|No| G["Capture printErr output"]
