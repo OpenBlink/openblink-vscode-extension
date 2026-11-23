@@ -11,6 +11,16 @@ TARGETS = {
     "linux-arm64", "linux-x64", "linux-armhf",
 }
 IDENTITY = ".//{http://schemas.microsoft.com/developer/vsx-schema/2011}Identity"
+NATIVE_MAGIC = {
+    "linux": (b"\x7fELF",),
+    "darwin": (
+        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
+    ),
+    "win32": (b"MZ",),
+}
 
 
 def validate(path, tag):
@@ -37,15 +47,20 @@ def validate(path, tag):
         if not entry.parts or entry.is_absolute() or ".." in entry.parts:
             raise ValueError("invalid extension entry point")
         required = {f"extension/{entry}", "extension/out/mrbc.js", "extension/out/mrbc.wasm"}
-        if target.startswith("linux-") and target != "linux-armhf":
-            required.add("extension/node_modules/@abandonware/bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node")
-        elif not target.startswith("linux-"):
-            required.add("extension/node_modules/@abandonware/noble/build/Release/binding.node")
         for member in sorted(required):
             if archive.getinfo(member).file_size == 0:
                 raise ValueError(f"empty archive member: {member}")
         if archive.read("extension/out/mrbc.wasm")[:4] != b"\x00asm":
             raise ValueError("invalid mrbc WASM header")
+        if target != "linux-armhf":
+            platform = target.split("-", 1)[0]
+            binding = (
+                "bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node"
+                if platform == "linux" else "noble/build/Release/binding.node"
+            )
+            with archive.open(f"extension/node_modules/@abandonware/{binding}") as native:
+                if not native.read(4).startswith(NATIVE_MAGIC[platform]):
+                    raise ValueError(f"invalid native binding header for {target}: {binding}")
         return target
 
 
@@ -59,7 +74,7 @@ def main(directory, tag):
         if target in seen:
             raise SystemExit(f"Duplicate VSIX target: {target}")
         seen.add(target)
-        binding_check = "native binding presence not required" if target == "linux-armhf" else "native binding presence only"
+        binding_check = "native binding not required" if target == "linux-armhf" else "native binding header checked"
         print(f"{path.name}: verified {target} ({binding_check})")
     if missing := TARGETS - seen:
         raise SystemExit(f"Missing VSIX targets: {', '.join(sorted(missing))}")
