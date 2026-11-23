@@ -8,6 +8,7 @@ const defaultUserDataDir = process.platform === 'win32'
 
 export default defineConfig({
   files: 'out/test/**/*.test.js',
+  version: '1.147.0',
   launchArgs: ['--user-data-dir', process.env.VSCODE_TEST_USER_DATA_DIR ?? defaultUserDataDir],
   mocha: {
     ui: 'tdd',

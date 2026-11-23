@@ -51,6 +51,13 @@ npm run lint
 npm test
 ```
 
+The Electron tests use the stable VS Code version pinned in `.vscode-test.mjs`.
+To move to the latest stable release, update `version` there from the
+[VS Code release list](https://github.com/microsoft/vscode/releases) and run the
+tests. The CI cache key changes with the config; confirm the Linux, macOS, and
+Windows jobs each launch that version. This is a test pin, not a change to
+`engines.vscode`.
+
 ### Manual Testing with F5
 
 1. Press **F5** in VS Code / Windsurf to launch the Extension Development Host
