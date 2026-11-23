@@ -139,7 +139,7 @@ git push origin v<VERSION>
 
 ### Release Pipeline
 
-The release workflow (`.github/workflows/release.yml`) runs a 4-job pipeline:
+The release workflow (`.github/workflows/release.yml`) runs a 5-job pipeline:
 
 1. **`lint-and-test`** — Runs ESLint, TypeScript typecheck, version consistency validation on tags, webpack build, test compilation, and the VS Code integration test suite.
 2. **`build-wasm`** — Builds mrbc WASM from source (Emscripten + Ruby).
@@ -151,12 +151,13 @@ The release workflow (`.github/workflows/release.yml`) runs a 4-job pipeline:
    - `linux-x64` (Linux x64)
    - `linux-arm64` (Linux ARM64)
    - `linux-armhf` (Linux ARM hard-float, best-effort cross-build)
-4. **`publish`** — Downloads all VSIXs and publishes to:
+4. **`validate-vsix`** — Checks archive integrity, metadata, the extension entry point, and WASM assets before approval. It checks the native binding's binary format for every target except armhf; it does not verify binding architecture or loadability.
+5. **`publish`** — Downloads all VSIXs and publishes to:
    - **VS Code Marketplace** (`vsce publish --packagePath vsix/*.vsix`)
    - **Open VSX** (per-file loop)
-   - **GitHub Release** (all VSIX files attached, always created)
+   - **GitHub Release** (all verified VSIX files attached)
 
-Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Release is always created so VSIX files are available for manual download.
+Marketplace/Open VSX publish failures are non-fatal warnings. If validation and attestation succeed, the GitHub Release is still created so VSIX files are available for manual download.
 
 ### User Experience
 
