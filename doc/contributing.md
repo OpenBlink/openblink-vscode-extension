@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the OpenBlink VSCode Extension!
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js `^22.22.2 || ^24.15.0 || >=26.0.0` (use Node.js 26 to match CI)
 - VS Code 1.96.0+
 - Git
 
@@ -159,6 +159,19 @@ The release workflow (`.github/workflows/release.yml`) runs a 5-job pipeline:
 
 Marketplace/Open VSX publish failures are non-fatal warnings. If validation and attestation succeed, the GitHub Release is still created so VSIX files are available for manual download.
 
+Packaging and publishing share the versions in `.github/publish-tools/package-lock.json`.
+To update them, run `npm install --save-exact --ignore-scripts --prefix .github/publish-tools @vscode/vsce@<version> ovsx@<version>` and commit both manifests.
+
+Before tagging a release, use a Node.js version listed in Prerequisites to
+verify packaging with the locked toolchain on the target platform. These
+commands create a local VSIX without publishing it:
+
+```bash
+npm run compile
+npm ci --ignore-scripts --prefix .github/publish-tools
+.github/publish-tools/node_modules/.bin/vsce package --target darwin-arm64  # or other target
+```
+
 ### User Experience
 
 End users do not need to be aware of the platform-specific packaging. VS Code Marketplace and Open VSX automatically serve the correct VSIX for the user's platform. For manual installation from GitHub Releases, users should select the file matching their platform.
@@ -167,11 +180,12 @@ See [Build System — Platform-Specific VSIX Packaging](build-system.md#platform
 
 ### Manual Release (if needed)
 
+After packaging the VSIX, export `VSCE_PAT` for Marketplace publishing and
+`OVSX_PAT` for Open VSX publishing in your shell.
+
 ```bash
-npm run compile
-npx @vscode/vsce package --target darwin-arm64   # or other target
-npx @vscode/vsce publish --packagePath *.vsix
-npx ovsx publish <file>.vsix -p <OVSX_PAT>
+.github/publish-tools/node_modules/.bin/vsce publish --packagePath *.vsix
+.github/publish-tools/node_modules/.bin/ovsx publish <file>.vsix
 ```
 
 ## Adding a New Board

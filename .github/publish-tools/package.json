@@ -1,0 +1,8 @@
+{
+  "name": "openblink-publish-tools",
+  "private": true,
+  "dependencies": {
+    "@vscode/vsce": "4.1.1",
+    "ovsx": "1.4.0"
+  }
+}
