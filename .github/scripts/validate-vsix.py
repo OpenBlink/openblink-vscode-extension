@@ -19,8 +19,18 @@ NATIVE_MAGIC = {
         b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
         b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
     ),
-    "win32": (b"MZ",),
 }
+
+
+def valid_pe_header(native):
+    header = native.read(0x40)
+    if len(header) != 0x40 or not header.startswith(b"MZ"):
+        return False
+    offset = int.from_bytes(header[0x3C:0x40], "little")
+    if offset < len(header):
+        return False
+    native.seek(offset)
+    return native.read(4) == b"PE\x00\x00"
 
 
 def validate(path, tag):
@@ -59,7 +69,11 @@ def validate(path, tag):
                 if platform == "linux" else "noble/build/Release/binding.node"
             )
             with archive.open(f"extension/node_modules/@abandonware/{binding}") as native:
-                if not native.read(4).startswith(NATIVE_MAGIC[platform]):
+                valid = (
+                    valid_pe_header(native) if platform == "win32"
+                    else native.read(4).startswith(NATIVE_MAGIC[platform])
+                )
+                if not valid:
                     raise ValueError(f"invalid native binding header for {target}: {binding}")
         return target
 
