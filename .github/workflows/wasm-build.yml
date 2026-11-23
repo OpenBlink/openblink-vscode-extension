@@ -33,12 +33,19 @@ jobs:
 
       # 'emsdk7.0.1' and 'ruby4' must match the toolchain versions configured below.
       - name: Restore mruby build cache
+        id: mruby-build-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             vendor/mruby/build
             resources/wasm_build
           key: mruby-wasm-${{ runner.os }}-emsdk7.0.1-ruby4-${{ env.MRUBY_SHA }}-${{ hashFiles('mruby_build_config.rb', 'Makefile') }}
+      # Fresh checkouts give sources newer mtimes than the restored objects,
+      # which would make rake recompile them all. Mark objects fresh instead:
+      # the key already guarantees identical inputs, so outputs are equivalent.
+      - name: Mark restored objects fresh
+        if: steps.mruby-build-cache.outputs.cache-hit == 'true'
+        run: find vendor/mruby/build resources/wasm_build -exec touch {} + 2>/dev/null || true
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16

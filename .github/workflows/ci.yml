@@ -39,6 +39,11 @@ jobs:
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
+      # A hit skips npm ci, so keep the manifest/lockfile consistency check
+      # it performs: a package.json change without a lockfile update must fail.
+      - name: Verify lockfile matches package.json
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: npm ci --ignore-scripts --dry-run
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
@@ -77,11 +82,19 @@ jobs:
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
+      # See above: keep the manifest/lockfile consistency check on a cache hit.
+      - name: Verify lockfile matches package.json
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: npm ci --ignore-scripts --dry-run
+      - name: Compute VS Code test cache period
+        # vscode-test tracks the latest stable release; rotate the key weekly
+        # so a new release eventually replaces the cached binary.
+        run: echo "VSCODE_TEST_WEEK=$(date +%Y-W%V)" >> "$GITHUB_ENV"
       - name: Restore VS Code test binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .vscode-test
-          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json') }}
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ env.VSCODE_TEST_WEEK }}-${{ hashFiles('package.json') }}
           restore-keys: |
             vscode-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Verify native binding (macOS/Windows)
