@@ -91,18 +91,11 @@ jobs:
       - name: Verify lockfile matches package.json
         if: steps.cache-node-modules.outputs.cache-hit == 'true'
         run: npm ci --ignore-scripts --dry-run
-      - name: Compute VS Code test cache period
-        # vscode-test tracks the latest stable release; rotate the key weekly
-        # so a new release eventually replaces the cached binary.
-        shell: bash
-        run: echo "VSCODE_TEST_WEEK=$(date +%Y-W%V)" >> "$GITHUB_ENV"
       - name: Restore VS Code test binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .vscode-test
-          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ env.VSCODE_TEST_WEEK }}-${{ hashFiles('package.json') }}
-          restore-keys: |
-            vscode-test-${{ runner.os }}-${{ runner.arch }}-
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.vscode-test.mjs', 'package-lock.json') }}
       - name: Verify native binding (macOS/Windows)
         if: runner.os != 'Linux'
         shell: bash
