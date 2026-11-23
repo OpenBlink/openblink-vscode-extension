@@ -157,8 +157,11 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: rm -rf node_modules/@abandonware/bluetooth-hci-socket
+      - name: Install locked packaging tools
+        run: npm ci --ignore-scripts --prefix .github/publish-tools
       - name: Package VSIX (${{ matrix.target }})
-        run: npx --yes @vscode/vsce@4 package --target ${{ matrix.target }}
+        shell: bash
+        run: .github/publish-tools/node_modules/.bin/vsce package --target ${{ matrix.target }}
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -175,14 +178,16 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           package-manager-cache: false
           node-version: 26
           check-latest: true
       - name: Install publishers
-        # zizmor: ignore[adhoc-packages] publisher CLIs are intentionally installed ad-hoc in the release job
-        run: npm install -g @vscode/vsce@4 ovsx@1
+        run: npm ci --ignore-scripts --prefix .github/publish-tools
       - name: Download all VSIX artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -200,7 +205,7 @@ jobs:
         continue-on-error: true
         env:
           VSCE_PAT: ${{ secrets.AZURE_PAT }}
-        run: vsce publish --packagePath vsix/*.vsix --skip-duplicate
+        run: .github/publish-tools/node_modules/.bin/vsce publish --packagePath vsix/*.vsix --skip-duplicate
       - name: Publish to Open VSX
         id: openvsx
         continue-on-error: true
@@ -210,7 +215,7 @@ jobs:
           failed=0
           for file in vsix/*.vsix; do
             echo "Publishing $file to Open VSX..."
-            ovsx publish "$file" --skip-duplicate || { echo "::warning::Open VSX publish failed for $file"; failed=1; }
+            .github/publish-tools/node_modules/.bin/ovsx publish "$file" --skip-duplicate || { echo "::warning::Open VSX publish failed for $file"; failed=1; }
           done
           exit $failed
       - name: Create GitHub Release

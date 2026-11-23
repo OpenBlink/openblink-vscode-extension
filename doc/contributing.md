@@ -151,6 +151,9 @@ The release workflow (`.github/workflows/release.yml`) runs a 4-job pipeline:
 
 Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Release is always created so VSIX files are available for manual download.
 
+Packaging and publishing share the versions in `.github/publish-tools/package-lock.json`.
+To update them, run `npm install --save-exact --ignore-scripts --prefix .github/publish-tools @vscode/vsce@<version> ovsx@<version>` and commit both manifests. Verify `vsce package` with the locked toolchain before tagging a release.
+
 ### User Experience
 
 End users do not need to be aware of the platform-specific packaging. VS Code Marketplace and Open VSX automatically serve the correct VSIX for the user's platform. For manual installation from GitHub Releases, users should select the file matching their platform.
