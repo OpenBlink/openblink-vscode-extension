@@ -164,10 +164,28 @@ jobs:
         with:
           name: vsix-${{ matrix.target }}
           path: '*.vsix'
+          if-no-files-found: error
+
+  validate-vsix:
+    name: Validate VSIX distribution
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: vsix
+          pattern: vsix-*
+          merge-multiple: true
+          digest-mismatch: error
+      - run: python3 .github/scripts/validate-vsix.py vsix "$GITHUB_REF_NAME"
 
   publish:
     name: Publish (Marketplace + Open VSX + GitHub Releases)
-    needs: [build, lint-and-test]
+    needs: [validate-vsix, lint-and-test]
     runs-on: ubuntu-26.04
     environment: production
     permissions:
@@ -189,6 +207,7 @@ jobs:
           path: vsix
           pattern: vsix-*
           merge-multiple: true
+          digest-mismatch: error
       - name: List VSIX files
         run: ls -la vsix
       - name: Attest build provenance
@@ -214,7 +233,7 @@ jobs:
           done
           exit $failed
       - name: Create GitHub Release
-        if: ${{ !cancelled() }}
+        id: github-release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         # zizmor: ignore[superfluous-actions] keeps gh-release for generated notes + file upload UX
         with:
@@ -230,7 +249,7 @@ jobs:
             echo "|---------|--------|";
             echo "| VS Code Marketplace | ${{ steps.marketplace.outcome }} |";
             echo "| Open VSX | ${{ steps.openvsx.outcome }} |";
-            echo "| GitHub Release | success |";
+            echo "| GitHub Release | ${{ steps.github-release.outcome }} |";
             echo "";
             echo "## Artifacts";
             find vsix -type f -printf '- %f\n';
