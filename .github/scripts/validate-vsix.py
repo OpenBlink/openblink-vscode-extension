@@ -2,7 +2,7 @@
 
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
@@ -30,7 +30,13 @@ def validate(path, tag):
                 raise ValueError(f"inconsistent package {field}")
         if tag != f"v{package['version']}":
             raise ValueError(f"package version {package['version']} does not match tag {tag}")
-        required = {"extension/out/mrbc.js", "extension/out/mrbc.wasm"}
+        main = package.get("main")
+        if not isinstance(main, str):
+            raise ValueError("invalid extension entry point")
+        entry = PurePosixPath(main)
+        if not entry.parts or entry.is_absolute() or ".." in entry.parts:
+            raise ValueError("invalid extension entry point")
+        required = {f"extension/{entry}", "extension/out/mrbc.js", "extension/out/mrbc.wasm"}
         if target.startswith("linux-") and target != "linux-armhf":
             required.add("extension/node_modules/@abandonware/bluetooth-hci-socket/build/Release/bluetooth_hci_socket.node")
         elif not target.startswith("linux-"):
@@ -53,8 +59,8 @@ def main(directory, tag):
         if target in seen:
             raise SystemExit(f"Duplicate VSIX target: {target}")
         seen.add(target)
-        suffix = " (native binding not verified)" if target == "linux-armhf" else ""
-        print(f"{path.name}: verified {target}{suffix}")
+        binding_check = "native binding presence not required" if target == "linux-armhf" else "native binding presence only"
+        print(f"{path.name}: verified {target} ({binding_check})")
     if missing := TARGETS - seen:
         raise SystemExit(f"Missing VSIX targets: {', '.join(sorted(missing))}")
 

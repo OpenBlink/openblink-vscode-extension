@@ -144,7 +144,7 @@ The release workflow (`.github/workflows/release.yml`) runs a 5-job pipeline:
    - `linux-x64` (Linux x64)
    - `linux-arm64` (Linux ARM64)
    - `linux-armhf` (Linux ARM hard-float, best-effort cross-build)
-4. **`validate-vsix`** — Checks archive integrity, metadata, WASM assets, and native bindings for the release targets before approval. The armhf package is checked without requiring a working armhf native binding.
+4. **`validate-vsix`** — Checks archive integrity, metadata, the extension entry point, and WASM assets before approval. It requires a nonempty native binding for every target except armhf; it does not verify binding architecture or loadability.
 5. **`publish`** — Downloads all VSIXs and publishes to:
    - **VS Code Marketplace** (`vsce publish --packagePath vsix/*.vsix`)
    - **Open VSX** (per-file loop)
