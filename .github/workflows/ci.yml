@@ -89,6 +89,7 @@ jobs:
       - name: Compute VS Code test cache period
         # vscode-test tracks the latest stable release; rotate the key weekly
         # so a new release eventually replaces the cached binary.
+        shell: bash
         run: echo "VSCODE_TEST_WEEK=$(date +%Y-W%V)" >> "$GITHUB_ENV"
       - name: Restore VS Code test binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
