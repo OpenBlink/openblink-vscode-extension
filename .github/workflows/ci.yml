@@ -29,7 +29,15 @@ jobs:
           node-version: 26
           check-latest: true
           cache: npm
+      # 'node26' must match node-version above: native binding ABI differs per major.
+      - name: Restore node_modules
+        id: cache-node-modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-node26-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
       - name: ESLint
         run: npm run lint
@@ -59,8 +67,23 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: echo "CL=/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS" >> $env:GITHUB_ENV
+      # 'node26' must match node-version above: native binding ABI differs per major.
+      - name: Restore node_modules
+        id: cache-node-modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-node26-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
+      - name: Restore VS Code test binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json') }}
+          restore-keys: |
+            vscode-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Verify native binding (macOS/Windows)
         if: runner.os != 'Linux'
         shell: bash

@@ -28,10 +28,23 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Resolve mruby submodule SHA
+        run: echo "MRUBY_SHA=$(git rev-parse HEAD:vendor/mruby)" >> "$GITHUB_ENV"
+
+      # 'emsdk7.0.1' and 'ruby4' must match the toolchain versions configured below.
+      - name: Restore mruby build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            vendor/mruby/build
+            resources/wasm_build
+          key: mruby-wasm-${{ runner.os }}-emsdk7.0.1-ruby4-${{ env.MRUBY_SHA }}-${{ hashFiles('mruby_build_config.rb', 'Makefile') }}
+
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: 7.0.1
+          actions-cache-folder: .emsdk-cache
 
       - name: Verify Emscripten
         run: emcc --version

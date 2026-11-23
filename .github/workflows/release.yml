@@ -53,7 +53,8 @@ jobs:
 
   build-wasm:
     name: Build mrbc WASM
-    needs: lint-and-test
+    # No 'needs': WASM build does not depend on lint. publish still gates on
+    # lint-and-test, so an unlinted tree can never ship.
     runs-on: ubuntu-26.04
     steps:
       - name: Disable CRLF conversion
@@ -166,7 +167,7 @@ jobs:
 
   publish:
     name: Publish (Marketplace + Open VSX + GitHub Releases)
-    needs: build
+    needs: [build, lint-and-test]
     runs-on: ubuntu-26.04
     environment: production
     permissions:
