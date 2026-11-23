@@ -90,25 +90,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # VSIX artifacts are built on the oldest supported OS images so the
+        # bundled native bindings keep running there (glibc / macOS floor).
         include:
-          - os: macos-26
+          - os: macos-15
             target: darwin-arm64
-          - os: macos-26-intel
+          - os: macos-15-intel
             target: darwin-x64
             node_arch: x64
           - os: windows-2025
             target: win32-x64
           - os: windows-11-arm
             target: win32-arm64
-          - os: ubuntu-26.04
+          - os: ubuntu-24.04
             target: linux-x64
-          - os: ubuntu-26.04-arm
+          - os: ubuntu-24.04-arm
             target: linux-arm64
           # NOTE: linux-armhf is a best-effort cross-build. QEMU enables
           # running ARM binaries via binfmt_misc but npm ci still compiles
           # native Node addons for the host (x86_64) architecture. BLE
           # native bindings in this VSIX may not work on real armhf devices.
-          - os: ubuntu-26.04
+          - os: ubuntu-24.04
             target: linux-armhf
             cross: true
     runs-on: ${{ matrix.os }}
