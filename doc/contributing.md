@@ -152,7 +152,16 @@ The release workflow (`.github/workflows/release.yml`) runs a 4-job pipeline:
 Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Release is always created so VSIX files are available for manual download.
 
 Packaging and publishing share the versions in `.github/publish-tools/package-lock.json`.
-To update them, run `npm install --save-exact --ignore-scripts --prefix .github/publish-tools @vscode/vsce@<version> ovsx@<version>` and commit both manifests. Verify packaging with the locked toolchain using the commands below before tagging a release.
+To update them, run `npm install --save-exact --ignore-scripts --prefix .github/publish-tools @vscode/vsce@<version> ovsx@<version>` and commit both manifests.
+
+Before tagging a release, verify packaging with the locked toolchain on the
+target platform. These commands create a local VSIX without publishing it:
+
+```bash
+npm run compile
+npm ci --ignore-scripts --prefix .github/publish-tools
+.github/publish-tools/node_modules/.bin/vsce package --target darwin-arm64  # or other target
+```
 
 ### User Experience
 
@@ -162,10 +171,10 @@ See [Build System — Platform-Specific VSIX Packaging](build-system.md#platform
 
 ### Manual Release (if needed)
 
+After packaging the VSIX, export `VSCE_PAT` for Marketplace publishing and
+`OVSX_PAT` for Open VSX publishing in your shell.
+
 ```bash
-npm run compile
-npm ci --ignore-scripts --prefix .github/publish-tools
-.github/publish-tools/node_modules/.bin/vsce package --target darwin-arm64  # or other target
 .github/publish-tools/node_modules/.bin/vsce publish --packagePath *.vsix
 .github/publish-tools/node_modules/.bin/ovsx publish <file>.vsix
 ```
