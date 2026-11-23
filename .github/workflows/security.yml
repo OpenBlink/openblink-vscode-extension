@@ -56,4 +56,5 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: Audit locked publishing tools
+        if: ${{ !cancelled() }}
         run: npm audit --audit-level=high --prefix .github/publish-tools
