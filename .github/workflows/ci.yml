@@ -17,7 +17,7 @@ concurrency:
 jobs:
   lint:
     name: Lint + typecheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Disable CRLF conversion
         run: git config --global core.autocrlf false
@@ -26,23 +26,41 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           check-latest: true
           cache: npm
+      # 'node26' must match node-version above: native binding ABI differs per major.
+      - name: Restore node_modules
+        id: cache-node-modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-node26-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
+      # A hit skips npm ci, so keep the manifest/lockfile consistency check
+      # it performs: a package.json change without a lockfile update must fail.
+      - name: Verify lockfile matches package.json
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: npm ci --ignore-scripts --dry-run
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
         run: npx tsc --noEmit -p .
 
   build-and-test:
-    name: Build & test (${{ matrix.os }})
+    # Check name uses the platform label, not the runner image, so branch
+    # protection required checks stay stable across image bumps.
+    name: Build & test (${{ matrix.platform }})
     needs: lint
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - { os: ubuntu-26.04, platform: linux }
+          - { os: macos-26, platform: macos }
+          - { os: windows-2025, platform: windows }
     runs-on: ${{ matrix.os }}
     steps:
       - name: Disable CRLF conversion
@@ -52,15 +70,39 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           check-latest: true
           cache: npm
       - name: Configure Windows native build
         if: runner.os == 'Windows'
         shell: pwsh
         run: echo "CL=/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS" >> $env:GITHUB_ENV
+      # 'node26' must match node-version above: native binding ABI differs per major.
+      - name: Restore node_modules
+        id: cache-node-modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-node26-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
+      # See above: keep the manifest/lockfile consistency check on a cache hit.
+      - name: Verify lockfile matches package.json
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: npm ci --ignore-scripts --dry-run
+      - name: Compute VS Code test cache period
+        # vscode-test tracks the latest stable release; rotate the key weekly
+        # so a new release eventually replaces the cached binary.
+        shell: bash
+        run: echo "VSCODE_TEST_WEEK=$(date +%Y-W%V)" >> "$GITHUB_ENV"
+      - name: Restore VS Code test binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ env.VSCODE_TEST_WEEK }}-${{ hashFiles('package.json') }}
+          restore-keys: |
+            vscode-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Verify native binding (macOS/Windows)
         if: runner.os != 'Linux'
         shell: bash
