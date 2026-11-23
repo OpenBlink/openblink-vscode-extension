@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the OpenBlink VSCode Extension!
 
 ### Prerequisites
 
-- Node.js 22+ (use Node.js 26 to match CI)
+- Node.js `^22.22.2 || ^24.15.0 || >=26.0.0` (use Node.js 26 to match CI)
 - VS Code 1.96.0+
 - Git
 
@@ -154,9 +154,9 @@ Marketplace/Open VSX publish failures are non-fatal warnings — the GitHub Rele
 Packaging and publishing share the versions in `.github/publish-tools/package-lock.json`.
 To update them, run `npm install --save-exact --ignore-scripts --prefix .github/publish-tools @vscode/vsce@<version> ovsx@<version>` and commit both manifests.
 
-Before tagging a release, use Node.js 22 or later to verify packaging with the
-locked toolchain on the target platform. These commands create a local VSIX
-without publishing it:
+Before tagging a release, use a Node.js version listed in Prerequisites to
+verify packaging with the locked toolchain on the target platform. These
+commands create a local VSIX without publishing it:
 
 ```bash
 npm run compile
