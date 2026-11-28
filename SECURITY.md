@@ -2,7 +2,8 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it responsibly by emailing the maintainers directly. Do **not** open a public GitHub issue for security-sensitive bugs.
+Please [report vulnerabilities privately on GitHub](https://github.com/OpenBlink/openblink-vscode-extension/security/advisories/new).
+Do not include vulnerability details in a public issue, pull request, or discussion.
 
 ## Dependency Audit
 
